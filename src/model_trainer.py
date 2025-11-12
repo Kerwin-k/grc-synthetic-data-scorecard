@@ -1,46 +1,19 @@
 import pandas as pd
 from sdv.metadata import SingleTableMetadata
-# [!!] 修正: 导入正确的 SDV 1.0+ 合成器类名 
-# [!!] Fix: Import the correct SDV 1.0+ synthesizer class names 
-from sdv.single_table import GaussianCopulaSynthesizer, CTGANSynthesizer, TVAESynthesizer
 from codecarbon import EmissionsTracker
 import os
 import logging
 import time
+# [!!] 新增: 从 config.py 导入配置
+# [!!] New: Import configurations from config.py
+from src.config import DatasetConfig, PathConfig, MODELS_CONFIG
 
-# 定义文件路径 (动态构建) / Define file paths (dynamically built)
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-
-PROCESSED_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "adult_clean.csv")
-METADATA_PATH = os.path.join(PROJECT_ROOT, "metadata", "adult_metadata.json")
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-SYNTH_DIR = os.path.join(PROJECT_ROOT, "results", "synthetic_data")
-EMISSIONS_DIR = os.path.join(PROJECT_ROOT, "results", "emissions")
-
-# 定义要评估的模型 / Define models to evaluate
-# 对于本地测试，epochs 设置得很低。对于最终的云运行，
-# 这些值应增加 (例如, 300-500) 。
-# For local testing, epochs are low. For final cloud runs,
-# these should be increased (e.g., 300-500).
-MODELS_CONFIG = {
-    "GaussianCopula": {
-        "class": GaussianCopulaSynthesizer,  #
-        "params": {}
-    },
-    "CTGAN": {
-        "class": CTGANSynthesizer,
-        "params": {"epochs": 5}  # 本地测试设为较低值 / Low value for local testing
-    },
-    "TVAE": {
-        "class": TVAESynthesizer,
-        "params": {"epochs": 5}  # 本地测试设为较低值 / Low value for local testing
-    }
-}
+# [!!] 修正: 导入正确的 SDV 1.0+ 合成器类名
+# [!!] Fix: Import the correct SDV 1.0+ synthesizer class names
+from sdv.single_table import GaussianCopulaSynthesizer, CTGANSynthesizer, TVAESynthesizer
 
 
-
-def train_and_generate(real_data, metadata, num_rows, models_config=MODELS_CONFIG):
+def train_and_generate(real_data, metadata):
     """
     循环遍历模型，在追踪排放的同时训练它们，并生成合成数据。
     Loops through models, trains them while tracking emissions, and generates synthetic data.
@@ -48,12 +21,14 @@ def train_and_generate(real_data, metadata, num_rows, models_config=MODELS_CONFI
     logging.info("Starting model training and generation process...")
 
     # 确保所有输出目录都存在 / Ensure all output directories exist
-    os.makedirs(MODELS_DIR, exist_ok=True)
-    os.makedirs(SYNTH_DIR, exist_ok=True)
-    os.makedirs(EMISSIONS_DIR, exist_ok=True)
+    os.makedirs(PathConfig.MODELS_DIR, exist_ok=True)
+    os.makedirs(PathConfig.SYNTH_DIR, exist_ok=True)
+    os.makedirs(PathConfig.EMISSIONS_DIR, exist_ok=True)
 
     sustainability_report = {}
-    for name, config in models_config.items():
+    num_rows = len(real_data)  # 获取要生成的行数 / Get number of rows to generate
+
+    for name, config in MODELS_CONFIG.items():
         logging.info(f"--- Processing Model: {name} ---")
 
         # 1. 初始化模型 / Initialize model
@@ -64,7 +39,7 @@ def train_and_generate(real_data, metadata, num_rows, models_config=MODELS_CONFI
         # 2. 配置可持续性追踪器 (维度 5) / Configure sustainability tracker (Dimension 5)
         tracker = EmissionsTracker(
             project_name=f"thesis-sdg-{name}",
-            output_dir=EMISSIONS_DIR,
+            output_dir=PathConfig.EMISSIONS_DIR,
             output_file=f"{name}_emissions.csv"
         )
 
@@ -100,14 +75,14 @@ def train_and_generate(real_data, metadata, num_rows, models_config=MODELS_CONFI
         }
 
         # 5. 保存训练好的模型 / Save trained model
-        model_path = os.path.join(MODELS_DIR, f"{name.lower()}.pkl")
+        model_path = os.path.join(PathConfig.MODELS_DIR, f"{name.lower()}.pkl")
         model.save(model_path)
         logging.info(f"Model saved to {model_path}")
 
         # 6. 生成并保存合成数据 / Generate and save synthetic data
         logging.info(f"Generating {num_rows} synthetic samples for {name}...")
         synthetic_data = model.sample(num_rows=num_rows)
-        synth_path = os.path.join(SYNTH_DIR, f"synth_{name.lower()}.csv")
+        synth_path = os.path.join(PathConfig.SYNTH_DIR, f"synth_{name.lower()}.csv")
         synthetic_data.to_csv(synth_path, index=False)
         logging.info(f"Synthetic data saved to {synth_path}")
 
@@ -116,10 +91,10 @@ def train_and_generate(real_data, metadata, num_rows, models_config=MODELS_CONFI
 
 if __name__ == "__main__":
     # 允许此脚本直接运行以进行设置 / Allow this script to be run directly for setup
-    logging.info("Loading data for model training...")
+    logging.info("Loading data for model training (Standalone)...")
     try:
-        data = pd.read_csv(PROCESSED_PATH)
-        metadata = SingleTableMetadata.load_from_json(METADATA_PATH)
+        data = pd.read_csv(DatasetConfig.PROCESSED_PATH)
+        metadata = SingleTableMetadata.load_from_json(DatasetConfig.METADATA_PATH)
         num_to_generate = len(data)  # 生成 1:1 匹配 / Generate 1:1 match
 
         report = train_and_generate(data, metadata, num_to_generate)
@@ -129,4 +104,6 @@ if __name__ == "__main__":
             logging.info(f"{model}: Time={metrics['training_time_sec']:.2f}s, CO2={metrics['co2_eq_kg']:.8f}kg")
 
     except FileNotFoundError:
-        logging.error("Processed data or metadata not found. Please run src/data_loader.py first.")
+        logging.error("Processed data or metadata not found. Please run data_loader.py first.")
+    except Exception as e:
+        logging.error(f"Standalone model training failed: {e}")

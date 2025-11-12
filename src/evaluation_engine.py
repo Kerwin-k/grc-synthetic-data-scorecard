@@ -10,34 +10,35 @@ from fairlearn.metrics import MetricFrame, demographic_parity_difference, equali
 import warnings
 import logging
 import numpy as np
+# 从 config.py 导入配置
+# Import configurations from config.py
+from src.config import DatasetConfig
 
 # 抑制来自 ML 库的常见警告 / Suppress common warnings from ML libraries
 warnings.filterwarnings("ignore")
 
-# 基于 Adult 数据集定义常量 / Define constants based on Adult dataset
-TARGET_COLUMN = "income"
-SENSITIVE_FEATURES = ['sex', 'race']  # 用于公平性评估 / For fairness evaluation
 
-
+# --- 请从这里开始复制 ---
 def _create_ml_preprocessor(data):
     """
     创建一个 scikit-learn ColumnTransformer 流程以确保一致的预处理。
     Creates a scikit-learn ColumnTransformer pipeline for consistent preprocessing.
+    [!!] 修正: 确保敏感特征被正确处理
+    [!!] Fix: Ensure sensitive features are processed correctly
     """
     # 从输入 dataframe 识别列类型 / Identify column types from input dataframe
     categorical_cols = data.select_dtypes(include=['object', 'category']).columns
     # 从特征集中排除目标列 / Exclude target column from features
-    categorical_cols = categorical_cols.drop(TARGET_COLUMN, errors='ignore')
-    # [!!] 'race' 和 'sex' 是分类特征，应在此处保留以进行独热编码
-    # [!!] 'race' and 'sex' are categorical and should be kept here for OHE
+    categorical_cols = categorical_cols.drop(DatasetConfig.TARGET_COLUMN, errors='ignore')
 
     numerical_cols = data.select_dtypes(include=np.number).columns
     # 确保敏感特征（如果它们是数字的话）不被缩放
     # Ensure sensitive features are not scaled if they are numeric
-    numerical_cols = numerical_cols.drop(SENSITIVE_FEATURES, errors='ignore')
+    numerical_cols = numerical_cols.drop(DatasetConfig.SENSITIVE_FEATURES, errors='ignore')
 
     # 创建预处理流程 / Create preprocessing pipelines
-    numeric_transformer = Pipeline(steps= [('std_scaler',StandardScaler())])
+    numeric_transformer = Pipeline(steps=[(
+    'std_scaler', StandardScaler())])
     categorical_transformer = Pipeline(steps=[('onehot', OneHotEncoder(handle_unknown='ignore'))])
 
     # 创建列转换器 / Create the column transformer
@@ -49,7 +50,6 @@ def _create_ml_preprocessor(data):
         remainder='drop'  # 丢弃未指定的列 / Drop columns not specified
     )
     return preprocessor
-
 
 
 def evaluate_quality_fup(real_data, synth_data, metadata_dict):
@@ -66,6 +66,8 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         quality_report = QualityReport()
         quality_report.generate(real_data, synth_data, metadata_dict)
 
+        # 从.get_details() 返回的 DataFrame 中显式选择 'Score' 列
+        # Explicitly select the 'Score' column from the.get_details() DataFrame
         shape_details = quality_report.get_details(property_name='Column Shapes')
         metrics['fidelity_jsd_avg'] = shape_details['Score'].mean()
 
@@ -84,11 +86,13 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         real_train, real_test = train_test_split(real_data, test_size=0.3, random_state=42)
 
         # 2. 准备 ML 数据 / Prepare ML data
-        y_real_test = real_test['income'].apply(lambda x: 1 if x == '>50K' else 0)
-        X_real_test = real_test.drop(columns=['income'])
+        # [!!] 修正: 显式选择 列以修复 'ValueError: The truth value of a Series is ambiguous'
+        # [!!] Fix: Explicitly select column to fix 'ValueError: The truth value of a Series is ambiguous'
+        y_real_test = real_test.apply(lambda x: 1 if x == DatasetConfig.POSITIVE_LABEL else 0)
+        X_real_test = real_test.drop(columns=[DatasetConfig.TARGET_COLUMN])
 
-        y_synth_train = synth_data['income'].apply(lambda x: 1 if x == '>50K' else 0)
-        X_synth_train = synth_data.drop(columns=['income'])
+        y_synth_train = synth_data.apply(lambda x: 1 if x == DatasetConfig.POSITIVE_LABEL else 0)
+        X_synth_train = synth_data.drop(columns=[DatasetConfig.TARGET_COLUMN])
 
         # 3. 在 *合成* 训练数据上创建并拟合预处理器 / Create and fit preprocessor on *synthetic* train data
         preprocessor = _create_ml_preprocessor(X_synth_train)
@@ -173,7 +177,7 @@ def evaluate_fairness(tstr_results):
 
     if not tstr_results:
         logging.warning("Skipping fairness evaluation as TSTR results are missing.")
-        for feature in SENSITIVE_FEATURES:
+        for feature in DatasetConfig.SENSITIVE_FEATURES:
             metrics[f'fairness_dp_diff_{feature}'] = np.nan
             metrics[f'fairness_eo_diff_{feature}'] = np.nan
         return metrics
@@ -182,7 +186,7 @@ def evaluate_fairness(tstr_results):
         y_true = tstr_results['y_true']
         y_pred = tstr_results['y_pred']
 
-        for feature in SENSITIVE_FEATURES:
+        for feature in DatasetConfig.SENSITIVE_FEATURES:
             sf_vector = tstr_results['sensitive_features_df'][feature]
 
             # 计算人口统计均等差异 (0 是完美的)
@@ -206,7 +210,7 @@ def evaluate_fairness(tstr_results):
 
     except Exception as e:
         logging.error(f"Error evaluating fairness: {e}")
-        for feature in SENSITIVE_FEATURES:
+        for feature in DatasetConfig.SENSITIVE_FEATURES:
             metrics[f'fairness_dp_diff_{feature}'] = np.nan
             metrics[f'fairness_eo_diff_{feature}'] = np.nan
 

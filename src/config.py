@@ -17,10 +17,17 @@
 # The core logic modules (data_loader, model_trainer, evaluation_engine, grc_translator)
 # will import all configurations from this file.
 #
+# [!!] 修正: 所有面向用户的输出 (日志、记分卡标签) 均设置为英文，
+#      以解决 matplotlib 的中文字体“乱码”问题 ([Image 11])。
+# [!!] Fix: All user-facing outputs (logs, scorecard labels) are set to English
+#      to resolve the matplotlib Chinese font "mojibake" issue ([Image 11]).
+#
 
 import os
 import numpy as np
 
+# [!!] 修正: 导入正确的 SDV 1.0+ 合成器类名 [1, 1, 1]
+# [!!] Fix: Import the correct SDV 1.0+ synthesizer class names [1, 1, 1]
 from sdv.single_table import (
     GaussianCopulaSynthesizer,
     CTGANSynthesizer,
@@ -51,16 +58,16 @@ class PathConfig:
     # 结果文件 / Result Files
     METRICS_REPORT_PATH = os.path.join(RESULTS_DIR, "metrics_report.json")
     GRC_SCORECARD_CSV_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.csv")
-    GRC_SCORECARD_IMG_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.png")  # [1]
+    GRC_SCORECARD_IMG_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.png")  #
 
 
 # --- 2. 数据集配置 (Dataset Configuration) ---
-# [!!] 关键区域: 当您更换数据集时，请在此处更新 [1]
-# [!!] KEY SECTION: Update this section when you change datasets [1]
+# [!!] 关键区域: 当您更换数据集时，请在此处更新
+# [!!] KEY SECTION: Update this section when you change datasets
 class DatasetConfig:
     # 2.1. 文件定义 / File Definition
-    RAW_DATA_FILE = "adult.csv"  # 位于 /data/raw/ 中的原始文件名 [1]
-    # The raw data filename in /data/raw/ [1]
+    RAW_DATA_FILE = "adult.csv"  # 位于 /data/raw/ 中的原始文件名
+    # The raw data filename in /data/raw/
 
     # 2.2. 模式定义 / Schema Definition
     # 定义用于机器学习效用 (TSTR) 和公平性评估的目标列
@@ -73,17 +80,13 @@ class DatasetConfig:
 
     # 定义用于公平性评估的受保护属性
     # Define the protected attributes for fairness evaluation
-    SENSITIVE_FEATURES = [
-    "sex", "race"
-    ]
+    SENSITIVE_FEATURES =["sex", "race"]
 
     # 定义在预处理期间应*丢弃*的列
     # (例如, 标识符, 采样权重, 或冗余列)
     # Define columns to *drop* during preprocessing
     # (e.g., identifiers, sampling weights, or redundant columns)
-    COLS_TO_DROP = [
-    "fnlwgt", "education"
-    ]
+    COLS_TO_DROP = ["fnlwgt", "education"]
 
     # 2.3. 自动生成的路径 (请勿编辑)
     # 2.3. Auto-generated paths (DO NOT EDIT)
@@ -99,8 +102,9 @@ class DatasetConfig:
 # --- 3. 模型训练配置 (Model Training Configuration) ---
 # 定义要比较的模型 / Define the models to compare
 
-# 填充模型配置
-# Populate model configuration
+# --- 请从这里开始复制 ---
+# [!!] 修正: 填充模型配置
+# [!!] Fix: Populate model configuration
 MODELS_CONFIG = {
     "GaussianCopula": {
         "class": GaussianCopulaSynthesizer,
@@ -121,16 +125,18 @@ MODELS_CONFIG = {
 
 
 # --- 4. GRC 记分卡配置 (GRC Scorecard Configuration) ---
-# 定义记分卡的结构、指标和 RAG (红/黄/绿) 阈值 [1]
-# Defines the scorecard structure, metrics, and RAG thresholds [1]
+# 定义记分卡的结构、指标和 RAG (红/黄/绿) 阈值
+# Defines the scorecard structure, metrics, and RAG thresholds
 class GRCConfig:
+    # [!!] 修正: 填充 'metric_order' (在 grc_translator 中使用)
+    # [!!] Fix: Populate 'metric_order' (used in grc_translator)
     # 定义记分卡中值的顺序 (英文)
     # Defines the order of values in the scorecard (English)
-    METRIC_ORDER = [
-        'Score', 'RAG'
-    ]
+    METRIC_ORDER = ['Score', 'RAG']
 
     # RAG 阈值定义 / RAG Threshold Definitions
+    # JSD 分数 (1-JSD) 越高越好
+    # JSD Score (1-JSD) is "higher is better"
     THRESHOLDS = {
         'JSD': {'green': 0.9, 'amber': 0.8},  # 越高越好 / Higher-is-better
         'NMI': {'green': 0.8, 'amber': 0.6},  # 越高越好 / Higher-is-better
@@ -139,37 +145,51 @@ class GRCConfig:
         'FAIR': {'green': 0.1, 'amber': 0.2}  # 越低越好 / Lower-is-better
     }
 
+    # [!!] 修正: 将所有标签更改为英文以修复“乱码” [Image 11]
+    # [!!] Fix: Change all labels to English to fix "mojibake" [Image 11]
     #
     # 映射: (类别, 指标) -> (JSON 键, 阈值, 逻辑)
     # Mapping: (Category, Metric) -> (JSON key, Threshold, Logic)
     METRIC_MAP = {
         'Quality': [
-            # (显示名称 / Display Name, JSON 键 / JSON Key, 阈值键 / Threshold Key)
-            ("Distribution (JSD Score)", "fidelity_jsd_avg", THRESHOLDS),
-            ("Correlation (NMI Score)", "fidelity_nmi_avg", THRESHOLDS['NMI'])
-        ],
+        # (显示名称 / Display Name, JSON 键 / JSON Key, 阈值键 / Threshold Key)
+        ("Distribution (JSD Score)", "fidelity_jsd_avg", THRESHOLDS),
+        ("Correlation (NMI Score)", "fidelity_nmi_avg", THRESHOLDS['NMI'])
+            ],
 
         'Utility': [
-            ("ML Utility (TSTR F1)", "utility_tstr_f1", THRESHOLDS)
+        ("ML Utility (TSTR F1)", "utility_tstr_f1", THRESHOLDS)
         ],
 
-        'Risk': [
-            ("Privacy (MIA AUC)", "privacy_mia_auc", THRESHOLDS['MIA']),
-            ("Fairness (Avg Diff)", "avg_fairness", THRESHOLDS)
-        ],
+    'Risk': [
+    ("Privacy (MIA AUC)", "privacy_mia_auc", THRESHOLDS['MIA']),
+    ("Fairness (Avg Diff)", "avg_fairness", THRESHOLDS)
+    ],
 
-        'Sustainability': [
-            # (阈值为 None 表示相对排名)
-            # (Threshold=None means relative ranking)
-            ("CO2 Emissions (kg)", "co2_eq_kg", None),
-            ("Training Time (s)", "training_time_sec", None)
-        ]
+    'Sustainability': [
+    # (阈值为 None 表示相对排名)
+    # (Threshold=None means relative ranking)
+    ("CO2 Emissions (kg)", "co2_eq_kg", None),
+    ("Training Time (s)", "training_time_sec", None)
+    ]
     }
+    # --- 复制到此结束 ---
 
-    # 用于可视化的 RAG 颜色 / New: RAG colors for visualization
+    # [!!] 新增: 用于可视化的 RAG 颜色 / New: RAG colors for visualization
     RAG_COLORS = {
         'Green': '#90EE90',  # 浅绿色 / Light Green
         'Amber': '#FFBF00',  # 琥珀色 / Amber
         'Red': '#F08080',  # 浅红色 / Light Red
         'N/A': '#D3D3D3'  # 灰色 / Gray
     }
+
+    # [!!] 新增: 用于图例和标题的英文文本 / New: English text for legend and title
+    LEGEND_LABELS = {
+        'Green': 'Good / Low-Risk / Best-in-Class',
+        'Amber': 'Warning / Requires Review',
+        'Red': 'Bad / High-Risk / Worst-in-Class',
+        'N/A': 'N/A (e.g., Metric Failed)'
+    }
+
+    IMG_TITLE = 'GRC Quality & Risk Scorecard: Synthetic Data Model Benchmark'
+    IMG_SUBTITLE = 'Comparative Analysis of Generative Models\n(Cells show "Score", Color shows "RAG" Risk Rating)'
