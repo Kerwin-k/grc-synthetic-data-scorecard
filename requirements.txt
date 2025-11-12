@@ -1,0 +1,19 @@
+# Core data science and ML stack
+pandas>=1.5.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+jupyter
+
+# Dimension 1: Synthetic Data Generation & Quality (FUP)
+sdv>=0.13.0
+sdmetrics>=0.11.0
+
+# Dimension 4: Algorithmic Fairness
+fairlearn>=0.8.0
+
+# Dimension 5: Computational Sustainability
+codecarbon>=2.3.0
+
+# Visualisation & Reporting
+matplotlib
+seaborn
