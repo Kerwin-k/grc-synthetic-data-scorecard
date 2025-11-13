@@ -164,16 +164,17 @@ def create_grc_scorecard(all_metrics, models_config):
     return scorecard_pivot
 
 
-def save_scorecard_as_image(scorecard_df):
+def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     """
     将 GRC 记分卡 DataFrame 保存为带 RAG 颜色、标题和图例的.png 图像。
     Saves the GRC Scorecard DataFrame as a.png image with RAG colors, Title, AND a Legend.
     """
 
-    # 自动从 Config 获取路径 / Auto-get paths from Config
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-    output_path = os.path.join(PROJECT_ROOT, "results", "grc_scorecard.png")
+    # 自动从 Config 获取路径 / Auto-get paths from Config when not provided
+    if output_path is None:
+        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+        PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+        output_path = os.path.join(PROJECT_ROOT, "results", "grc_scorecard.png")
 
     logging.info(f"Visualizing GRC Scorecard as image: {output_path}...")
 
