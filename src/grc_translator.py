@@ -6,6 +6,7 @@ import logging
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from pandas.plotting import table
+from textwrap import fill
 
 # --- 配置日志 / Configure logging ---
 # [!!] 修正: 将日志级别设置为 INFO，并将消息更改为英文
@@ -164,16 +165,17 @@ def create_grc_scorecard(all_metrics, models_config):
     return scorecard_pivot
 
 
-def save_scorecard_as_image(scorecard_df):
+def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     """
     将 GRC 记分卡 DataFrame 保存为带 RAG 颜色、标题和图例的.png 图像。
     Saves the GRC Scorecard DataFrame as a.png image with RAG colors, Title, AND a Legend.
     """
 
-    # 自动从 Config 获取路径 / Auto-get paths from Config
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-    output_path = os.path.join(PROJECT_ROOT, "results", "grc_scorecard.png")
+    # 自动从 Config 获取路径 / Auto-get paths from Config when not provided
+    if output_path is None:
+        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+        PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+        output_path = os.path.join(PROJECT_ROOT, "results", "grc_scorecard.png")
 
     logging.info(f"Visualizing GRC Scorecard as image: {output_path}...")
 
@@ -195,14 +197,20 @@ def save_scorecard_as_image(scorecard_df):
 
     plot_df.reset_index(inplace=True)  # 将索引转为列以便绘图 / Convert index to columns for plotting
 
-    fig, ax = plt.subplots(figsize=(16, 10))
+    # 根据内容动态调整画布尺寸，避免表格溢出 / Dynamically size the canvas to prevent overflow
+    n_rows, n_cols = plot_df.shape
+    fig_width = max(14, 1.4 * (n_cols + 1))
+    fig_height = max(8.5, 0.65 * (n_rows + 6))  # 额外高度用于标题 / Extra headroom for titles
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')  # 隐藏坐标轴 / Hide axes [2, 3]
 
     # 创建表格 / Create table [4]
     tab = table(ax, plot_df, loc='center', cellLoc='center', rowLoc='center')
     tab.auto_set_font_size(False)
     tab.set_fontsize(10)
-    tab.scale(1.2, 1.2)
+    tab.auto_set_column_width(col=list(range(n_cols)))
+    tab.scale(1.0, 1.15)
 
     # --- 应用 RAG 颜色 / Apply RAG Colors ---
     # 循环遍历单元格 / Loop through cells [3]
@@ -212,7 +220,7 @@ def save_scorecard_as_image(scorecard_df):
             cell.set_facecolor("#DDDDDD")  # 灰色表头 / Gray header
             cell.set_text_props(weight='bold')
             if row > 0 and col < 2:  # 将类别/指标设为粗体左对齐 / Bold-left align Category/Metric
-                cell.set_text_props(weight='bold', ha='left')
+                cell.set_text_props(weight='bold', ha='left', wrap=True)
             continue
 
         # 获取对应的 RAG 值 / Get the corresponding RAG value
@@ -228,12 +236,46 @@ def save_scorecard_as_image(scorecard_df):
             logging.warning(f"Could not set color for cell ({row}, {col}): {e}")
             cell.set_facecolor('#FFFFFF')  # 默认为白色 / Default to white on error
 
-    fig.text(0.5, 0.95,
-             'GRC Quality & Risk Scorecard',
-             ha='center', va='bottom', fontsize=16, weight='bold')
-    fig.text(0.5, 0.92,
-             'Comparative Analysis of Synthetic Data Generators\n(Cells show "Score", Color shows "RAG" Risk Rating)',
-             ha='center', va='bottom', fontsize=10)
+    title_text = fig.text(
+        0.5,
+        0.955,
+        'GRC Quality & Risk Scorecard',
+        ha='center',
+        va='bottom',
+        fontsize=18,
+        weight='bold'
+    )
+
+    subtitle = fill(
+        'Comparative analysis of synthetic data generators. Scores quantify performance; cell colours show governance, risk, and compliance status.',
+        width=110
+    )
+    subtitle_text = fig.text(
+        0.5,
+        0.918,
+        subtitle,
+        ha='center',
+        va='bottom',
+        fontsize=11,
+        linespacing=1.2
+    )
+    subtitle_text.set_wrap(True)
+
+    guidance = fill(
+        'Quality & Utility metrics (JSD, NMI, TSTR) — higher is better. Privacy & Fairness risks (MIA, Avg Diff) — lower is safer. '
+        'Sustainability metrics benchmark each model against the most efficient generator (lower = better).',
+        width=110
+    )
+    guidance_text = fig.text(
+        0.5,
+        0.885,
+        guidance,
+        ha='center',
+        va='bottom',
+        fontsize=10,
+        linespacing=1.25
+    )
+    guidance_text.set_wrap(True)
 
     green_patch = mpatches.Patch(color=RAG_COLORS['Green'], label='Good / Low-Risk / Best-in-Class')
     amber_patch = mpatches.Patch(color=RAG_COLORS['Amber'], label='Warning / Requires Review')
@@ -246,7 +288,7 @@ def save_scorecard_as_image(scorecard_df):
     legend = fig.legend(
         handles=[green_patch, amber_patch, red_patch, na_patch],
         loc='lower center',
-        bbox_to_anchor=(0.5, 0.05),  # 定位在图表下方 / Position below chart
+        bbox_to_anchor=(0.5, 0.04),  # 定位在图表下方 / Position below chart
         ncol=4,  # 水平排列 / Arrange horizontally
         frameon=False,  # 移除边框 / Remove border
         fontsize=10
@@ -260,7 +302,7 @@ def save_scorecard_as_image(scorecard_df):
     fig.savefig(
         output_path,
         dpi=300,
-        bbox_extra_artists=(legend,),  # <--- 包含图例 / Include the legend
+        bbox_extra_artists=(legend, title_text, subtitle_text, guidance_text),  # 确保文本不会被裁剪
         bbox_inches='tight'
     )
     logging.info(f"GRC Scorecard image saved to {output_path}")

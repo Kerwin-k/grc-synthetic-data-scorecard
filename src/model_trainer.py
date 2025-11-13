@@ -13,7 +13,7 @@ from src.config import DatasetConfig, PathConfig, MODELS_CONFIG
 from sdv.single_table import GaussianCopulaSynthesizer, CTGANSynthesizer, TVAESynthesizer
 
 
-def train_and_generate(real_data, metadata):
+def train_and_generate(real_data, metadata, num_rows_to_generate=None, models_config=None):
     """
     循环遍历模型，在追踪排放的同时训练它们，并生成合成数据。
     Loops through models, trains them while tracking emissions, and generates synthetic data.
@@ -26,9 +26,10 @@ def train_and_generate(real_data, metadata):
     os.makedirs(PathConfig.EMISSIONS_DIR, exist_ok=True)
 
     sustainability_report = {}
-    num_rows = len(real_data)  # 获取要生成的行数 / Get number of rows to generate
+    num_rows = num_rows_to_generate or len(real_data)
+    models_to_use = models_config or MODELS_CONFIG
 
-    for name, config in MODELS_CONFIG.items():
+    for name, config in models_to_use.items():
         logging.info(f"--- Processing Model: {name} ---")
 
         # 1. 初始化模型 / Initialize model
@@ -97,7 +98,7 @@ if __name__ == "__main__":
         metadata = SingleTableMetadata.load_from_json(DatasetConfig.METADATA_PATH)
         num_to_generate = len(data)  # 生成 1:1 匹配 / Generate 1:1 match
 
-        report = train_and_generate(data, metadata, num_to_generate)
+        report = train_and_generate(data, metadata, num_rows_to_generate=num_to_generate)
 
         logging.info("--- Sustainability Report Summary ---")
         for model, metrics in report.items():
