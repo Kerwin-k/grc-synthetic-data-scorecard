@@ -81,6 +81,8 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
 
     # --- 1.2 效用 (TSTR) / Utility (TSTR) ---
     logging.info("... Calculating Utility (TSTR)...")
+    real_train = None
+
     try:
         # 1. 将真实数据拆分为一个保留的测试集 / Split real data into a holdout test set
         real_train, real_test = train_test_split(real_data, test_size=0.3, random_state=42)
@@ -88,10 +90,14 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         # 2. 准备 ML 数据 / Prepare ML data
         # [!!] 修正: 显式选择 列以修复 'ValueError: The truth value of a Series is ambiguous'
         # [!!] Fix: Explicitly select column to fix 'ValueError: The truth value of a Series is ambiguous'
-        y_real_test = real_test.apply(lambda x: 1 if x == DatasetConfig.POSITIVE_LABEL else 0)
+        y_real_test = real_test[DatasetConfig.TARGET_COLUMN].apply(
+            lambda value: 1 if value == DatasetConfig.POSITIVE_LABEL else 0
+        )
         X_real_test = real_test.drop(columns=[DatasetConfig.TARGET_COLUMN])
 
-        y_synth_train = synth_data.apply(lambda x: 1 if x == DatasetConfig.POSITIVE_LABEL else 0)
+        y_synth_train = synth_data[DatasetConfig.TARGET_COLUMN].apply(
+            lambda value: 1 if value == DatasetConfig.POSITIVE_LABEL else 0
+        )
         X_synth_train = synth_data.drop(columns=[DatasetConfig.TARGET_COLUMN])
 
         # 3. 在 *合成* 训练数据上创建并拟合预处理器 / Create and fit preprocessor on *synthetic* train data
@@ -124,8 +130,9 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
     logging.info("... Calculating Privacy (MIA)...")
     try:
         # 我们使用 'real_train' 分割作为“真实”数据 / We use 'real_train' split as "real" data
+        reference_real = real_train if real_train is not None else real_data
         n_synth = len(synth_data)
-        real_subset = real_train.sample(n=n_synth, replace=True, random_state=42)
+        real_subset = reference_real.sample(n=n_synth, replace=True, random_state=42)
 
         # 创建标签: 1 = 真实, 0 = 合成 / Create labels: 1 = Real, 0 = Synthetic
         real_subset['is_real'] = 1
@@ -187,7 +194,14 @@ def evaluate_fairness(tstr_results):
         y_pred = tstr_results['y_pred']
 
         for feature in DatasetConfig.SENSITIVE_FEATURES:
-            sf_vector = tstr_results['sensitive_features_df'][feature]
+            sensitive_df = tstr_results['sensitive_features_df']
+            if feature not in sensitive_df.columns:
+                logging.warning("Sensitive feature '%s' not found in evaluation data.", feature)
+                metrics[f'fairness_dp_diff_{feature}'] = np.nan
+                metrics[f'fairness_eo_diff_{feature}'] = np.nan
+                continue
+
+            sf_vector = sensitive_df[feature]
 
             # 计算人口统计均等差异 (0 是完美的)
             # Calculate Demographic Parity Difference (0 is perfect)
