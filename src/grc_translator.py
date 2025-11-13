@@ -6,6 +6,7 @@ import logging
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from pandas.plotting import table
+from textwrap import fill
 
 # --- 配置日志 / Configure logging ---
 # [!!] 修正: 将日志级别设置为 INFO，并将消息更改为英文
@@ -198,8 +199,8 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
 
     # 根据内容动态调整画布尺寸，避免表格溢出 / Dynamically size the canvas to prevent overflow
     n_rows, n_cols = plot_df.shape
-    fig_width = max(14, 1.4 * n_cols)
-    fig_height = max(8, 0.6 * (n_rows + 5))  # +5 为标题和图例预留空间 / reserve space for title & legend
+    fig_width = max(14, 1.4 * (n_cols + 1))
+    fig_height = max(8.5, 0.65 * (n_rows + 6))  # 额外高度用于标题 / Extra headroom for titles
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')  # 隐藏坐标轴 / Hide axes [2, 3]
@@ -235,26 +236,46 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
             logging.warning(f"Could not set color for cell ({row}, {col}): {e}")
             cell.set_facecolor('#FFFFFF')  # 默认为白色 / Default to white on error
 
-    fig.text(0.5, 0.95,
-             'GRC Quality & Risk Scorecard',
-             ha='center', va='bottom', fontsize=18, weight='bold')
-    fig.text(
+    title_text = fig.text(
         0.5,
-        0.915,
-        'Comparative analysis of synthetic data generators. Scores quantify performance; cell colours show GRC risk status.',
+        0.955,
+        'GRC Quality & Risk Scorecard',
         ha='center',
         va='bottom',
-        fontsize=11
+        fontsize=18,
+        weight='bold'
     )
-    fig.text(
+
+    subtitle = fill(
+        'Comparative analysis of synthetic data generators. Scores quantify performance; cell colours show governance, risk, and compliance status.',
+        width=110
+    )
+    subtitle_text = fig.text(
+        0.5,
+        0.918,
+        subtitle,
+        ha='center',
+        va='bottom',
+        fontsize=11,
+        linespacing=1.2
+    )
+    subtitle_text.set_wrap(True)
+
+    guidance = fill(
+        'Quality & Utility metrics (JSD, NMI, TSTR) — higher is better. Privacy & Fairness risks (MIA, Avg Diff) — lower is safer. '
+        'Sustainability metrics benchmark each model against the most efficient generator (lower = better).',
+        width=110
+    )
+    guidance_text = fig.text(
         0.5,
         0.885,
-        'Quality & Utility metrics (JSD, NMI, TSTR) — higher is better. Privacy & Fairness risks (MIA, Avg Diff) — lower is safer.\n'
-        'Sustainability metrics benchmark each model against the most efficient generator (lower = better).',
+        guidance,
         ha='center',
         va='bottom',
-        fontsize=10
+        fontsize=10,
+        linespacing=1.25
     )
+    guidance_text.set_wrap(True)
 
     green_patch = mpatches.Patch(color=RAG_COLORS['Green'], label='Good / Low-Risk / Best-in-Class')
     amber_patch = mpatches.Patch(color=RAG_COLORS['Amber'], label='Warning / Requires Review')
@@ -281,7 +302,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     fig.savefig(
         output_path,
         dpi=300,
-        bbox_extra_artists=(legend,),  # <--- 包含图例 / Include the legend
+        bbox_extra_artists=(legend, title_text, subtitle_text, guidance_text),  # 确保文本不会被裁剪
         bbox_inches='tight'
     )
     logging.info(f"GRC Scorecard image saved to {output_path}")
