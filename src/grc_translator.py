@@ -204,6 +204,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
 
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     ax.axis('off')  # 隐藏坐标轴 / Hide axes [2, 3]
+    ax.set_position([0.05, 0.15, 0.9, 0.72])  # 为标题和图例留出空间 / Reserve space for headers & legend
 
     # 创建表格 / Create table [4]
     tab = table(ax, plot_df, loc='center', cellLoc='center', rowLoc='center')
@@ -236,10 +237,13 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
             logging.warning(f"Could not set color for cell ({row}, {col}): {e}")
             cell.set_facecolor('#FFFFFF')  # 默认为白色 / Default to white on error
 
-    title_text = fig.text(
+    wrap_width = max(60, int(fig_width * 4.5))
+
+    title_text = ax.text(
         0.5,
-        0.955,
+        1.08,
         'GRC Quality & Risk Scorecard',
+        transform=ax.transAxes,
         ha='center',
         va='bottom',
         fontsize=18,
@@ -248,12 +252,13 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
 
     subtitle = fill(
         'Comparative analysis of synthetic data generators. Scores quantify performance; cell colours show governance, risk, and compliance status.',
-        width=110
+        width=wrap_width
     )
-    subtitle_text = fig.text(
+    subtitle_text = ax.text(
         0.5,
-        0.918,
+        1.045,
         subtitle,
+        transform=ax.transAxes,
         ha='center',
         va='bottom',
         fontsize=11,
@@ -264,16 +269,17 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     guidance = fill(
         'Quality & Utility metrics (JSD, NMI, TSTR) — higher is better. Privacy & Fairness risks (MIA, Avg Diff) — lower is safer. '
         'Sustainability metrics benchmark each model against the most efficient generator (lower = better).',
-        width=110
+        width=wrap_width
     )
-    guidance_text = fig.text(
+    guidance_text = ax.text(
         0.5,
-        0.885,
+        1.01,
         guidance,
+        transform=ax.transAxes,
         ha='center',
         va='bottom',
         fontsize=10,
-        linespacing=1.25
+        linespacing=1.2
     )
     guidance_text.set_wrap(True)
 
@@ -288,7 +294,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     legend = fig.legend(
         handles=[green_patch, amber_patch, red_patch, na_patch],
         loc='lower center',
-        bbox_to_anchor=(0.5, 0.04),  # 定位在图表下方 / Position below chart
+        bbox_to_anchor=(0.5, 0.03),  # 定位在图表下方 / Position below chart
         ncol=4,  # 水平排列 / Arrange horizontally
         frameon=False,  # 移除边框 / Remove border
         fontsize=10
