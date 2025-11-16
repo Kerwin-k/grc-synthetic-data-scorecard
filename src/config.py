@@ -17,24 +17,15 @@
 # The core logic modules (data_loader, model_trainer, evaluation_engine, grc_translator)
 # will import all configurations from this file.
 #
-# [!!] 修正: 所有面向用户的输出 (日志、记分卡标签) 均设置为英文，
-#      以解决 matplotlib 的中文字体“乱码”问题 ([Image 11])。
-# [!!] Fix: All user-facing outputs (logs, scorecard labels) are set to English
-#      to resolve the matplotlib Chinese font "mojibake" issue ([Image 11]).
-#
-
 import os
 import numpy as np
-
-# [!!] 修正: 导入正确的 SDV 1.0+ 合成器类名 [1, 1, 1]
-# [!!] Fix: Import the correct SDV 1.0+ synthesizer class names [1, 1, 1]
 from sdv.single_table import (
     GaussianCopulaSynthesizer,
     CTGANSynthesizer,
     TVAESynthesizer
 )
 
-# --- 1. 路径配置 (Path Configuration) ---
+# --- 路径配置 (Path Configuration) ---
 # 自动检测项目根目录 (thesis_project)
 # Automatically detects the project root directory (thesis_project)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,15 +52,14 @@ class PathConfig:
     GRC_SCORECARD_IMG_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.png")  #
 
 
-# --- 2. 数据集配置 (Dataset Configuration) ---
+# --- 数据集配置 (Dataset Configuration) ---
 # [!!] 关键区域: 当您更换数据集时，请在此处更新
 # [!!] KEY SECTION: Update this section when you change datasets
 class DatasetConfig:
-    # 2.1. 文件定义 / File Definition
+    # 文件定义 / File Definition
     RAW_DATA_FILE = "adult.csv"  # 位于 /data/raw/ 中的原始文件名
-    # The raw data filename in /data/raw/
 
-    # 2.2. 模式定义 / Schema Definition
+    # 模式定义 / Schema Definition
     # 定义用于机器学习效用 (TSTR) 和公平性评估的目标列
     # Define the target column for Machine Learning Utility (TSTR) and Fairness
     TARGET_COLUMN = "income"
@@ -88,23 +78,22 @@ class DatasetConfig:
     # (e.g., identifiers, sampling weights, or redundant columns)
     COLS_TO_DROP = ["fnlwgt", "education"]
 
-    # 2.3. 自动生成的路径 (请勿编辑)
-    # 2.3. Auto-generated paths (DO NOT EDIT)
-    RAW_PATH = os.path.join(PathConfig.RAW_DIR, RAW_DATA_FILE)
 
+    # 自动生成的路径 (请勿编辑)
+    # Auto-generated paths (DO NOT EDIT)
+    RAW_PATH = os.path.join(PathConfig.RAW_DIR, RAW_DATA_FILE)
     CLEAN_FILE = RAW_DATA_FILE.replace(".csv", "_clean.csv")
     PROCESSED_PATH = os.path.join(PathConfig.PROCESSED_DIR, CLEAN_FILE)
-
     META_FILE = RAW_DATA_FILE.replace(".csv", "_metadata.json")
     METADATA_PATH = os.path.join(PathConfig.METADATA_DIR, META_FILE)
+
 
 
 # --- 3. 模型训练配置 (Model Training Configuration) ---
 # 定义要比较的模型 / Define the models to compare
 
-# --- 请从这里开始复制 ---
-# [!!] 修正: 填充模型配置
-# [!!] Fix: Populate model configuration
+# 填充模型配置
+# Populate model configuration
 MODELS_CONFIG = {
     "GaussianCopula": {
         "class": GaussianCopulaSynthesizer,
@@ -121,15 +110,12 @@ MODELS_CONFIG = {
 }
 
 
-# --- 复制到此结束 ---
 
 
 # --- 4. GRC 记分卡配置 (GRC Scorecard Configuration) ---
 # 定义记分卡的结构、指标和 RAG (红/黄/绿) 阈值
 # Defines the scorecard structure, metrics, and RAG thresholds
 class GRCConfig:
-    # [!!] 修正: 填充 'metric_order' (在 grc_translator 中使用)
-    # [!!] Fix: Populate 'metric_order' (used in grc_translator)
     # 定义记分卡中值的顺序 (英文)
     # Defines the order of values in the scorecard (English)
     METRIC_ORDER = ['Score', 'RAG']
@@ -145,8 +131,8 @@ class GRCConfig:
         'FAIR': {'green': 0.1, 'amber': 0.2}  # 越低越好 / Lower-is-better
     }
 
-    # [!!] 修正: 将所有标签更改为英文以修复“乱码” [Image 11]
-    # [!!] Fix: Change all labels to English to fix "mojibake" [Image 11]
+    # [!!] 修正: 将所有标签更改为英文以修复“乱码”
+    # [!!] Fix: Change all labels to English to fix "mojibake"
     #
     # 映射: (类别, 指标) -> (JSON 键, 阈值, 逻辑)
     # Mapping: (Category, Metric) -> (JSON key, Threshold, Logic)
@@ -173,7 +159,6 @@ class GRCConfig:
     ("Training Time (s)", "training_time_sec", None)
     ]
     }
-    # --- 复制到此结束 ---
 
     # [!!] 新增: 用于可视化的 RAG 颜色 / New: RAG colors for visualization
     RAG_COLORS = {
