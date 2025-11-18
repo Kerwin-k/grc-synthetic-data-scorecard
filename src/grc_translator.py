@@ -6,6 +6,8 @@ import json
 import os
 import logging
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
+
 import matplotlib.patches as mpatches
 from textwrap import fill
 
@@ -43,9 +45,12 @@ METRIC_MAP = {
 }
 
 # [!!] 新增: 用于可视化的 RAG 颜色 / New: RAG colors for visualization [1]
-RAG_COLORS = {'Green': '#90EE90', 'Amber': '#FFBF00', 'Red': '#F08080', 'N/A': '#D3D3D3'}
-
-
+RAG_COLORS = {
+    "Green": "#B7E1CD",   # 柔和绿色
+    "Amber": "#FFE9A3",   # 柔和琥珀色
+    "Red":   "#F4B4AE",   # 柔和红色（偏珊瑚）
+    "N/A":   "#E6E6E6",   # 中性灰
+}
 def _get_rag_status(metric_name, value, thresholds):
     """
     辅助函数，用于分配 RAG 状态。
@@ -165,212 +170,266 @@ def create_grc_scorecard(all_metrics, models_config):
 
     return scorecard_pivot
 
-
 def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     """
-    GRC 记分卡可视化：将 DataFrame 保存为带 RAG 颜色、标题和图例的 PNG 图像。
-    GRC Scorecard visualisation: save the DataFrame as a PNG image with RAG colours, title and legend.
+    Generate a publication-quality GRC scorecard figure.
     """
-
-    # 如果未指定输出路径，则自动定位到项目根目录下的 results/grc_scorecard.png
-    # If no output path is provided, automatically use results/grc_scorecard.png under the project root.
-    if output_path is None:
-        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-        PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-        output_path = os.path.join(PROJECT_ROOT, "results", "grc_scorecard.png")
-
-    logging.info(f"Visualizing GRC Scorecard as image: {output_path}...")
-
-    # 复制一份，以免修改到原始 DataFrame
-    # Work on a copy to avoid mutating the original DataFrame.
-    plot_df = scorecard_df.copy()
-
-    # ---------- 提取 RAG 层用于着色 / Extract the RAG layer for colouring ----------
+    # ---- 0. 取 Score / RAG ----
     try:
-        rag_df = plot_df.xs("RAG", level=1, axis=1)
-    except KeyError:
-        logging.error("Could not find 'RAG' columns in scorecard. Skipping colouring.")
-        rag_df = pd.DataFrame()
-
-    # 只保留 Score 层用于展示数值
-    # Keep only the 'Score' layer for displaying numeric values.
-    try:
-        plot_df = plot_df.xs("Score", level=1, axis=1)
-    except KeyError:
-        logging.error("Could not find 'Score' columns in scorecard. Cannot generate image.")
+        score_data = scorecard_df.xs("Score", level=1, axis=1)
+        rag_data = scorecard_df.xs("RAG", level=1, axis=1)
+    except Exception as e:
+        logging.error(f"Scorecard missing Score/RAG: {e}")
         return
 
-    # 将层级索引中的 (Category, Metric) 还原为普通列，方便遍历
-    # Reset multi-index (Category, Metric) to columns for easier iteration.
-    plot_df.reset_index(inplace=True)
+    n_rows, n_cols = score_data.shape
+    if n_rows == 0 or n_cols == 0:
+        logging.error("Empty scorecard – nothing to plot.")
+        return
 
-    # ---------- 数值格式化，便于论文展示 / Format numeric scores for display ----------
-    # 只对模型得分列做格式化，不动 Category / Metric
-    # Only format generator score columns; keep Category/Metric as they are.
-    score_cols = [c for c in plot_df.columns if c not in ["Category", "Metric"]]
+    if output_path is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        output_path = os.path.join(project_root, "results", "grc_scorecard.png")
 
-    def _format_score(x):
-        # 针对浮点数保留三位小数，其它类型原样返回
-        # Keep three decimals for floats; leave other types unchanged.
-        if isinstance(x, (int, float)):
-            return f"{x:.3f}"
-        return x
+    # ---- 1. 画布 & GridSpec ----
+    fig_width = max(10.0, 2.6 * n_cols)
+    fig_height = max(8.0, 0.55 * n_rows + 6.5)
+    fig = plt.figure(figsize=(fig_width, fig_height))
 
-    plot_df[score_cols] = plot_df[score_cols].applymap(_format_score)
+    # 调整各块高度比例，让整体更紧凑：标题略薄、灰框略薄、矩阵略厚、图例略薄
+    outer_gs = fig.add_gridspec(4, 1, height_ratios=[0.65, 1.4, 3.5, 0.7])
+    ax_title = fig.add_subplot(outer_gs[0])
+    ax_text  = fig.add_subplot(outer_gs[1])
+    ax_heat  = fig.add_subplot(outer_gs[2])
+    ax_leg   = fig.add_subplot(outer_gs[3])
 
-    # ---------- 根据行列数动态调整画布大小 / Dynamically size the figure ----------
-    n_rows, n_cols = plot_df.shape
-    fig_width = max(13, 1.3 * (n_cols + 1))      # 稍微收窄一点，更像论文版式 / slightly narrower
-    fig_height = max(8.0, 0.55 * (n_rows + 8))   # 保持横向论文比例 / keep a landscape, paper-like ratio
+    ax_title.set_axis_off()
+    ax_text.set_axis_off()
+    ax_leg.set_axis_off()
 
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    ax.axis("off")
+    for spine in ax_heat.spines.values():
+        spine.set_visible(False)
+    # 让 y 轴刻度线贴在矩阵左边界
+    ax_heat.spines["left"].set_position(("data", 0))
 
-    # 将表格整体下移，为标题、解释和图例保留空间
-    # Move the table down to leave room for headings, interpretation text and legend.
-    # [left, bottom, width, height] in figure coordinates
-    ax.set_position([0.05, 0.18, 0.9, 0.60])
-
-    # ---------- 创建表格 / Create the table ----------
-    # 使用 cellText + colLabels，避免自动添加 0,1,2... 行号
-    # Use cellText + colLabels to avoid automatic row indices (0,1,2,...).
-    tab = ax.table(
-        cellText=plot_df.values,
-        colLabels=plot_df.columns,
-        loc="center",
-        cellLoc="center",
-        rowLoc="center",
+    # ---- 2. 标题 & 副标题 ----
+    title = "GRC Quality, Risk, Sustainability and Utility Scorecard"
+    subtitle = (
+        "Comparison of synthetic data generators across governance-relevant dimensions: "
+        "data quality, risk (privacy & fairness), sustainability, and utility."
     )
-    tab.auto_set_font_size(False)
-    tab.set_fontsize(10)
-    tab.auto_set_column_width(col=list(range(n_cols)))
-    tab.scale(1.0, 1.15)  # 稍微拉高行距 / Slightly stretch row height
-
-    # ---------- 应用 RAG 颜色逻辑 / Apply RAG colour logic ----------
-    for (row, col), cell in tab.get_celld().items():
-        # 表头行和前两列（Category / Metric）统一灰底并加粗
-        # Header row and the first two columns get a grey background and bold text.
-        if row == 0 or col < 2:
-            cell.set_facecolor("#DDDDDD")
-            cell.set_text_props(weight="bold")
-            # 左侧两列靠左显示并允许换行
-            # Left columns left-aligned with wrapping.
-            if row > 0 and col < 2:
-                cell.set_text_props(weight="bold", ha="left", wrap=True)
-            continue
-
-        # 其余单元格根据 RAG 值上色
-        # Other cells use the RAG value for background colour.
-        try:
-            model_name = plot_df.columns[col]
-            metric_cat = plot_df.iloc[row - 1][["Category", "Metric"]]
-            rag_value = rag_df.loc[(metric_cat["Category"], metric_cat["Metric"]), model_name]
-            color = RAG_COLORS.get(rag_value, "#FFFFFF")
-            cell.set_facecolor(color)
-        except (IndexError, KeyError) as e:
-            logging.warning(f"Could not set colour for cell ({row}, {col}): {e}")
-            cell.set_facecolor("#FFFFFF")
-
-    # ---------- 顶部标题与说明（仅英文）/ Top title and explanations (English only) ----------
-    # 根据画布宽度设定换行宽度，使长句在窄屏上也能美观换行
-    # Wrap width depends on figure width so long sentences wrap nicely.
-    wrap_width = max(70, int(fig_width * 4.0))
-
-    # 主标题：简洁正式的标题
-    # Main title: concise, formal title for the thesis.
-    title_text = fig.text(
-        0.5,
-        0.96,
-        "GRC Quality & Risk Scorecard",
-        ha="center",
-        va="top",
-        fontsize=18,
-        weight="bold",
+    ax_title.text(
+        0.5, 0.80, title,
+        ha="center", va="top",
+        fontsize=17, fontweight="bold",
+        transform=ax_title.transAxes,
+    )
+    ax_title.text(
+        0.5, 0.25,
+        "\n".join(textwrap.wrap(subtitle, width=90)),
+        ha="center", va="top",
+        fontsize=10.5,
+        transform=ax_title.transAxes,
     )
 
-    # 副标题：一句话说明比较什么
-    # Subtitle: one-line description of what is being compared.
-    subtitle = textwrap.fill(
-        "Comparison of synthetic tabular data generators across quality, risk, "
-        "sustainability, and utility metrics.",
-        width=wrap_width,
-    )
-    subtitle_text = fig.text(
-        0.5,
-        0.915,
-        subtitle,
-        ha="center",
-        va="top",
-        fontsize=11,
-        linespacing=1.25,
-    )
-    subtitle_text.set_wrap(True)
+    # ---- 3. 上方两个灰框 ----
+    ax_text.set_xlim(0, 1)
+    ax_text.set_ylim(0, 1)
 
-    # 解释文本：左对齐的多行短句，更接近高水平论文风格
-    # Interpretation block: left-aligned multi-line text, closer to a high-quality paper layout.
-    interpretation_lines = [
-        "Interpretation:",
-        "• Rows represent evaluation metrics and columns represent data generators.",
-        "• Numerical values are normalised scores: higher scores are preferred for "
-        "quality and utility, whereas lower values are preferred for privacy, fairness, "
-        "and sustainability (CO₂ emissions and training time).",
-        "• Background colours summarise governance risk levels: green = low risk, "
-        "amber = requires review, red = high risk, grey = metric not available.",
+    left_box = FancyBboxPatch(
+        (0.02, 0.04), 0.45, 0.92,
+        boxstyle="round,pad=0.03",
+        linewidth=0.5, edgecolor="#DDDDDD", facecolor="#F9F9F9",
+        transform=ax_text.transAxes, zorder=0,
+    )
+    right_box = FancyBboxPatch(
+        (0.53, 0.04), 0.45, 0.92,
+        boxstyle="round,pad=0.03",
+        linewidth=0.5, edgecolor="#DDDDDD", facecolor="#F9F9F9",
+        transform=ax_text.transAxes, zorder=0,
+    )
+    ax_text.add_patch(left_box)
+    ax_text.add_patch(right_box)
+
+    # ------------ 左框：Dimensions ------------
+    ax_text.text(
+        0.045, 0.96, "Dimensions:",
+        ha="left", va="top",
+        fontsize=11.0, fontweight="bold",
+        transform=ax_text.transAxes,
+    )
+
+    left_bullets = [
+        "• Quality – how closely synthetic data matches the patterns and relationships in the real data.",
+        "• Risk – privacy and fairness risk, including potential bias between groups and risk of re-identification.",
+        "• Sustainability – CO\u2082 emissions and computational cost of generating the data. Lower is better.",
+        "• Utility – downstream ML performance when models are trained on synthetic data and evaluated on real data (TSTR).",
     ]
-    interpretation_text = "\n".join(
-        [textwrap.fill(line, width=wrap_width) for line in interpretation_lines]
+    # 稍微往下挪一点起始位置，同时减小行间距 & 段间距，避免溢出
+    left_y = 0.845
+    left_line_h = 0.065
+    left_block_extra = 0.045
+    left_wrap_width = 50
+
+    for bullet in left_bullets:
+        wrapped = textwrap.wrap(bullet, width=left_wrap_width)
+        if not wrapped:
+            continue
+        for j, line in enumerate(wrapped):
+            ax_text.text(
+                0.045,
+                left_y - j * left_line_h,
+                line,
+                ha="left", va="top",
+                fontsize=9.3,
+                transform=ax_text.transAxes,
+            )
+        total_h = len(wrapped) * left_line_h
+        left_y -= total_h + left_block_extra
+
+    # ------------ 右框：How to read the scorecard ------------
+    ax_text.text(
+        0.555, 0.96, "How to read the scorecard",
+        ha="left", va="top",
+        fontsize=11.0, fontweight="bold",
+        transform=ax_text.transAxes,
     )
 
-    # 让解释文本在表格上方、靠左排版，看起来像“图内说明”
-    # Place the interpretation text above the table, left-aligned, similar to in-figure notes.
-    guidance_text = fig.text(
-        0.06,                # 左边距与表格齐平 / align with table left
-        0.86,                # 稍高于表格顶部 / just above the table
-        interpretation_text,
-        ha="left",
-        va="top",
-        fontsize=9.5,
-        linespacing=1.35,
-    )
-    guidance_text.set_wrap(True)
+    right_bullets = [
+        "• Each row is a metric under one of the four GRC dimensions (Quality, Risk, Sustainability, Utility).",
+        "• Each column is a synthetic data generator (model).",
+        "• Green / Amber / Red / Grey follow the legend below. Higher scores are better for quality and utility; lower scores are better for risk and sustainability.",
+    ]
+    right_y = 0.845
+    right_line_h = 0.065
+    right_block_extra = 0.045
+    right_wrap_width = 44
 
-    # ---------- 图例：解释颜色含义 / Legend: explain colour meaning ----------
-    green_patch = mpatches.Patch(
-        color=RAG_COLORS["Green"],
-        label="Good / Low-Risk / Best-in-Class",
-    )
-    amber_patch = mpatches.Patch(
-        color=RAG_COLORS["Amber"],
-        label="Warning / Requires Review",
-    )
-    red_patch = mpatches.Patch(
-        color=RAG_COLORS["Red"],
-        label="Bad / High-Risk / Worst-in-Class",
-    )
-    na_patch = mpatches.Patch(
-        color=RAG_COLORS["N/A"],
-        label="N/A (e.g., Metric Failed)",
-    )
+    for bullet in right_bullets:
+        wrapped = textwrap.wrap(bullet, width=right_wrap_width)
+        if not wrapped:
+            continue
+        for j, line in enumerate(wrapped):
+            ax_text.text(
+                0.555,
+                right_y - j * right_line_h,
+                line,
+                ha="left", va="top",
+                fontsize=9.3,
+                transform=ax_text.transAxes,
+            )
+        total_h = len(wrapped) * right_line_h
+        right_y -= total_h + right_block_extra
 
-    legend = fig.legend(
-        handles=[green_patch, amber_patch, red_patch, na_patch],
+    # ---- 4. 记分卡矩阵 ----
+    ax_heat.set_xlim(-0.15, n_cols)
+    ax_heat.set_ylim(0, n_rows)
+    ax_heat.invert_yaxis()
+
+    for i in range(n_rows):
+        for j in range(n_cols):
+            val = score_data.iat[i, j]
+            rag = rag_data.iat[i, j]
+            color = RAG_COLORS.get(rag, "#FFFFFF")
+
+            ax_heat.add_patch(
+                plt.Rectangle(
+                    (j, i), 1, 1,
+                    facecolor=color,
+                    edgecolor="white",  # 改成白色
+                    linewidth=0.8,  # 稍微粗一点，让分隔清晰
+                )
+            )
+            if pd.notna(val):
+                ax_heat.text(
+                    j + 0.5, i + 0.5,
+                    f"{val:.3f}",
+                    ha="center", va="center",
+                    fontsize=8.5,
+                )
+
+    # 列名（模型）
+    ax_heat.set_xticks([j + 0.5 for j in range(n_cols)])
+    ax_heat.set_xticklabels(score_data.columns.tolist(), fontsize=11)
+
+    # 行名：两行（维度 + 指标）
+    y_centers = [i + 0.5 for i in range(n_rows)]
+    ax_heat.set_yticks(y_centers)
+    ax_heat.set_yticklabels([])
+
+    # 在画行名之前，加一条「维度之间」的淡分割线
+    prev_category = None
+    for row_i, idx in enumerate(score_data.index):
+        if isinstance(idx, tuple):
+            category, metric = idx
+        else:
+            category, metric = "", str(idx)
+        if prev_category is not None and category != prev_category:
+            y = row_i  # 当前行上方的坐标
+            ax_heat.axhline(
+                y,
+                color="#DDDDDD",
+                linewidth=0.8,
+            )
+        prev_category = category
+
+        y = y_centers[row_i]
+
+        ax_heat.text(
+            -0.02, y - 0.12,
+            category,
+            ha="right", va="center",
+            fontsize=8.3,
+            fontweight="bold",
+            transform=ax_heat.transData,
+        )
+        ax_heat.text(
+            -0.02, y + 0.08,
+            metric,
+            ha="right", va="center",
+            fontsize=8.1,
+            transform=ax_heat.transData,
+        )
+
+    # 轴标题：X 轴用 labelpad，Y 轴用 coords，避免和行名重叠
+    ax_heat.set_xlabel("Model", fontsize=11, labelpad=10)
+    ax_heat.set_ylabel("GRC assessment dimension", fontsize=11)
+    ax_heat.yaxis.set_label_coords(-0.16, 0.5)
+
+    # 刻度线
+    ax_heat.tick_params(axis="x", length=4, width=0.8)
+    ax_heat.tick_params(axis="y", length=4, width=0.8)
+
+    # ---- 5. 底部图例 ----
+    legend_patches = [
+        mpatches.Patch(color=RAG_COLORS["Green"], label="Green – Good / Low-Risk"),
+        mpatches.Patch(color=RAG_COLORS["Amber"], label="Amber – Review Required"),
+        mpatches.Patch(color=RAG_COLORS["Red"],  label="Red – High-Risk"),
+        mpatches.Patch(color=RAG_COLORS["N/A"],  label="Grey – N/A"),
+    ]
+    ax_leg.legend(
+        handles=legend_patches,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.04),
-        ncol=4,
+        bbox_to_anchor=(0.5, 0.30),
+        ncol=2,
         frameon=False,
         fontsize=9.5,
     )
 
-    # ---------- 保存图片，确保标题/说明/图例都不会被裁剪 / Save image without cutting text ----------
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-    fig.savefig(
-        output_path,
-        dpi=300,
-        bbox_inches="tight",
-        bbox_extra_artists=(legend, title_text, subtitle_text, guidance_text),
+    # ---- 6. 整体布局 ----
+    plt.subplots_adjust(
+        left=0.18,   # 整体向左挪一点，缩小左侧留白
+        right=0.98,
+        top=0.97,
+        bottom=0.07,
+        hspace=0.18,  # 纵向间距更紧凑
     )
-    logging.info(f"GRC Scorecard image saved to {output_path}")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.savefig(output_path, dpi=300)
+    plt.close(fig)
+    logging.info(f"GRC Scorecard saved to {output_path}")
 
 
 if __name__ == "__main__":

@@ -58,25 +58,39 @@ class PathConfig:
 class DatasetConfig:
     # 文件定义 / File Definition
     RAW_DATA_FILE = "adult.csv"  # 位于 /data/raw/ 中的原始文件名
+    #     RAW_DATA_FILE = "application_train.csv"
 
     # 模式定义 / Schema Definition
     # 定义用于机器学习效用 (TSTR) 和公平性评估的目标列
     # Define the target column for Machine Learning Utility (TSTR) and Fairness
     TARGET_COLUMN = "income"
+    #     TARGET_COLUMN = "TARGET"
 
     # 定义目标列中的“阳性”标签 (用于计算 F1 分数)
     # Define the "positive" label in the target column (for F1 score)
     POSITIVE_LABEL = ">50K"
+    #     POSITIVE_LABEL = 1
 
     # 定义用于公平性评估的受保护属性
     # Define the protected attributes for fairness evaluation
     SENSITIVE_FEATURES =["sex", "race"]
+    #     SENSITIVE_FEATURES = [
+    #         "CODE_GENDER",  # gender
+    #         "NAME_EDUCATION_TYPE",
+    #         "NAME_FAMILY_STATUS",
+    #         "DAYS_BIRTH"  # age proxy
+    #     ]
 
     # 定义在预处理期间应*丢弃*的列
     # (例如, 标识符, 采样权重, 或冗余列)
     # Define columns to *drop* during preprocessing
     # (e.g., identifiers, sampling weights, or redundant columns)
     COLS_TO_DROP = ["fnlwgt", "education"]
+    #     COLS_TO_DROP = [
+    #         "SK_ID_CURR",  # useless ID
+    #     ]
+    #
+
 
 
     # 自动生成的路径 (请勿编辑)
