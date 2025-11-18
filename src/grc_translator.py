@@ -80,20 +80,54 @@ def create_grc_scorecard(all_metrics, models_config):
     """
     scorecard_data = []
 
-    # 计算可持续性基线 / Calculate sustainability baselines
-    all_co2 = [m.get('co2_eq_kg', np.inf) for m in all_metrics.values() if m.get('co2_eq_kg') is not None]
+    # ---- 先看 Sustainability coverage 情况 ----
+    coverage_values = [
+        m.get("sustainability_coverage")
+        for m in all_metrics.values()
+        if "sustainability_coverage" in m
+    ]
+
+    any_partial = any(c == "partial" for c in coverage_values)
+    all_none = (not coverage_values) or all(
+        c in (None, "none") for c in coverage_values
+    )
+
+    # 行名后缀：有 partial → [*]，全部 none → [N/A]
+    sustainability_label_suffix = ""
+    if any_partial and not all_none:
+        sustainability_label_suffix = " [*]"
+    elif all_none:
+        sustainability_label_suffix = " [N/A]"
+
+    # ---- 只用 coverage == full 的模型来算 co2/time 的基线 ----
+    all_co2 = [
+        m.get("co2_eq_kg", np.inf)
+        for m in all_metrics.values()
+        if (m.get("co2_eq_kg") is not None)
+        and (m.get("sustainability_coverage") == "full")
+    ]
     min_co2 = min(all_co2) if all_co2 else np.inf
 
-    all_time = [m.get('training_time_sec', np.inf) for m in all_metrics.values() if
-                m.get('training_time_sec') is not None]
+    all_time = [
+        m.get("training_time_sec", np.inf)
+        for m in all_metrics.values()
+        if (m.get("training_time_sec") is not None)
+        and (m.get("sustainability_coverage") == "full")
+    ]
     min_time = min(all_time) if all_time else np.inf
 
+    # ---- 遍历模型，构造每一行 ----
     for model_name, metrics in all_metrics.items():
 
         # 聚合公平性指标 / Aggregate fairness metrics
-        fair_metrics = [v for k, v in metrics.items() if k.startswith('fairness_') and pd.notna(v)]
+        fair_metrics = [
+            v for k, v in metrics.items()
+            if k.startswith("fairness_") and pd.notna(v)
+        ]
         avg_fairness = np.nanmean(fair_metrics) if fair_metrics else np.nan
-        metrics['avg_fairness'] = avg_fairness  # 添加以便映射 / Add for mapping
+        metrics["avg_fairness"] = avg_fairness  # 添加以便映射 / Add for mapping
+
+        coverage = metrics.get("sustainability_coverage")
 
         # --- 定义记分卡行 / Define scorecard rows ---
         for key, config in METRIC_MAP.items():
@@ -103,54 +137,65 @@ def create_grc_scorecard(all_metrics, models_config):
             value = metrics.get(key)
             status = "N/A"
 
-            if config['thresholds'] is not None:
-                # 使用绝对阈值 / Use absolute thresholds
-                status = _get_rag_status(key, value, config['thresholds'])
-            elif pd.notna(value):
-                # 使用相对 RAG 状态进行可持续性排名 / Use relative RAG for sustainability
-                if key == 'co2_eq_kg':
-                    if value <= (min_co2 * 1.1):
-                        status = "Green"  # 10% 容差
-                    elif value <= (min_co2 * 2.0):
-                        status = "Amber"  # 2倍以内
-                    else:
-                        status = "Red"
-                elif key == 'training_time_sec':
-                    if value <= (min_time * 1.1):
-                        status = "Green"
-                    elif value <= (min_time * 2.0):
-                        status = "Amber"
-                    else:
-                        status = "Red"
+            # ⭐ 对可持续性两个指标：只要 coverage 不是 full，一律视为 N/A（灰色）
+            if key in ("co2_eq_kg", "training_time_sec") and coverage != "full":
+                value = np.nan
+                status = "N/A"
+            else:
+                if config["thresholds"] is not None:
+                    # 使用绝对阈值 / Use absolute thresholds
+                    status = _get_rag_status(key, value, config["thresholds"])
+                elif pd.notna(value):
+                    # 使用相对 RAG 状态进行可持续性排名 / Use relative RAG for sustainability
+                    if key == "co2_eq_kg":
+                        if value <= (min_co2 * 1.1):
+                            status = "Green"  # 10% 容差
+                        elif value <= (min_co2 * 2.0):
+                            status = "Amber"  # 2倍以内
+                        else:
+                            status = "Red"
+                    elif key == "training_time_sec":
+                        if value <= (min_time * 1.1):
+                            status = "Green"
+                        elif value <= (min_time * 2.0):
+                            status = "Amber"
+                        else:
+                            status = "Red"
 
-            # [!!] 修正: 拆分英文显示名称 / Fix: Split English display name
-            category, metric_display = config['display_name'].split(': ')
+            # 拆分英文显示名称 / Split English display name
+            category, metric_display = config["display_name"].split(": ")
 
-            scorecard_data.append({
-                'Model': model_name,
-                'Category': category,
-                'Metric': metric_display,
-                'Score': value,
-                'RAG': status
-            })
+            # 对 Sustainability 两个指标加上 [*] / [N/A] 后缀
+            if key in ("co2_eq_kg", "training_time_sec") and sustainability_label_suffix:
+                metric_display = metric_display + sustainability_label_suffix
+
+            scorecard_data.append(
+                {
+                    "Model": model_name,
+                    "Category": category,
+                    "Metric": metric_display,
+                    "Score": value,
+                    "RAG": status,
+                }
+            )
 
     # --- 透视 DataFrame / Pivot the DataFrame ---
     df = pd.DataFrame(scorecard_data)
 
     scorecard_pivot = df.pivot_table(
-        index=['Category', 'Metric'],
-        columns='Model',
-        values=['Score', 'RAG'],aggfunc = 'first')
+        index=["Category", "Metric"],
+        columns="Model",
+        values=["Score", "RAG"],
+        aggfunc="first",
+    )
 
     # 重新排序列以实现逻辑呈现 / Reorder columns for logical presentation
     scorecard_pivot = scorecard_pivot.swaplevel(0, 1, axis=1)
 
     # 确保模型和指标的顺序 / Ensure model and metric order
     model_order = list(models_config.keys())
-    metric_order = [ 'Score', 'RAG']
+    metric_order = ["Score", "RAG"]
 
-    # [!!] 修正: 移除 'level=0' 以修复 'TypeError:... ambiguous' [1]
-    # [!!] Fix: Remove 'level=0' to fix 'TypeError:... ambiguous' [1]
     scorecard_pivot = scorecard_pivot.reindex(
         columns=pd.MultiIndex.from_product([model_order, metric_order])
     )
@@ -158,17 +203,8 @@ def create_grc_scorecard(all_metrics, models_config):
     # 按类别排序索引 / Sort index by Category
     scorecard_pivot = scorecard_pivot.sort_index(level='Category', sort_remaining=False)
 
-    # 格式化分数使其更易读 / Format scores for readability
-    def format_value(x):
-        if isinstance(x, (float, np.floating)):
-            return f"{x:.4f}"
-        return x
-
-    for model in model_order:
-        if (model, 'Score') in scorecard_pivot.columns:
-            scorecard_pivot = scorecard_pivot.apply(format_value)
-
     return scorecard_pivot
+
 
 def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     """
@@ -341,10 +377,20 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
                     linewidth=0.8,  # 稍微粗一点，让分隔清晰
                 )
             )
+            # 尝试把 val 当 float 画，如果实在转不了就直接写 str(val)
             if pd.notna(val):
+                val_to_show = None
+                if isinstance(val, (int, float, np.floating)):
+                    val_to_show = f"{val:.3f}"
+                else:
+                    try:
+                        val_to_show = f"{float(val):.3f}"
+                    except (TypeError, ValueError):
+                        val_to_show = str(val)
+
                 ax_heat.text(
                     j + 0.5, i + 0.5,
-                    f"{val:.3f}",
+                    val_to_show,
                     ha="center", va="center",
                     fontsize=8.5,
                 )
@@ -411,11 +457,41 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     ax_leg.legend(
         handles=legend_patches,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.30),
+        bbox_to_anchor=(0.5, 0.25),
         ncol=2,
         frameon=False,
         fontsize=9.5,
     )
+    # ---- 5.1 可持续性脚注：放在图例下方 ----
+    # 从 MultiIndex 中取出 Metric 文本，判断是否包含 [*] 或 [N/A]
+    metric_names = [idx[1] if isinstance(idx, tuple) else str(idx)
+                    for idx in scorecard_df.index]
+    has_partial = any("[*]" in name for name in metric_names)
+    has_na = any("[N/A]" in name for name in metric_names)
+
+    footnote_lines = []
+    if has_partial:
+        footnote_lines.append(
+            "[*] Sustainability rows are based on partial energy measurements "
+            "(e.g., only CPU/RAM energy was available; GPU energy could not be "
+            "measured for at least one model)."
+        )
+    if has_na:
+        footnote_lines.append(
+            "[N/A] Sustainability metrics could not be computed for at least "
+            "one model because no valid energy/emissions data were available."
+        )
+
+    if footnote_lines:
+        ax_leg.text(
+            0.5,
+            0.05,
+            "\n".join(textwrap.wrap(" ".join(footnote_lines), width=110)),
+            ha="center",
+            va="bottom",
+            fontsize=8.0,
+            transform=ax_leg.transAxes,
+        )
 
     # ---- 6. 整体布局 ----
     plt.subplots_adjust(
@@ -455,7 +531,7 @@ if __name__ == "__main__":
         logging.info(f"Found models: {model_keys}")
 
         scorecard = create_grc_scorecard(metrics_data, mock_config)
-        scorecard.to_csv(GRC_SCORECARD_PATH)
+        scorecard.to_csv(GRC_SCORECARD_PATH, float_format="%.3f")
         logging.info(f"GRC Scorecard CSV saved to {GRC_SCORECARD_PATH}")
 
         # [!!] 修正: 调用新函数时不带参数 (路径是自动的)

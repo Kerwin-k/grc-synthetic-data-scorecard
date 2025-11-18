@@ -1,9 +1,5 @@
 # SynTab-GRC: A Multi-Dimensional Governance Scorecard for Synthetic Tabular Data
 
-This repository contains the code for the MSc thesis:
-
-> **"Responsible AI in Practice: A Multi-Dimensional Evaluation Framework for Synthetic Tabular Data"**
-
 The project implements an end-to-end evaluation pipeline for synthetic **tabular** data generators (e.g. GaussianCopula, CTGAN, TVAE).  
 It translates technical metrics into a **GRC-oriented scorecard** that can be read by non-technical governance, risk and compliance (GRC) stakeholders.
 

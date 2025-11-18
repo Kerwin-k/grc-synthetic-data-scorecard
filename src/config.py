@@ -52,6 +52,23 @@ class PathConfig:
     GRC_SCORECARD_IMG_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.png")  #
 
 
+# --- 碳排放 / CodeCarbon 配置 ---
+class SustainabilityConfig:
+    """
+    配置 CodeCarbon 的国家设定。
+
+    FIXED_COUNTRY_ISO:
+        - 为 None 时 (默认): 使用 CodeCarbon 自带的 IP 自动定位。
+          如果定位失败，CodeCarbon 内部会回退到默认国家（目前是 Canada），
+          日志里会出现 “Using 'Canada' as the default value”。
+        - 设置为 "MYS" / "CHN" / "HKG" / "CAN" 等时：强制所有实验使用该国家
+          的电网排放因子，完全不再调用地理定位 API，更方便论文复现。
+
+    FALLBACK_COUNTRY_LABEL 只用于日志说明，帮助你在 log 里看到写的是什么。
+    """
+    FIXED_COUNTRY_ISO: str | None = "MYS"      # 例如 "MYS" 或 "CHN"，不想固定就保持 None
+    FALLBACK_COUNTRY_LABEL: str = "Canada"    # 仅用于说明文字
+
 # --- 数据集配置 (Dataset Configuration) ---
 # [!!] 关键区域: 当您更换数据集时，请在此处更新
 # [!!] KEY SECTION: Update this section when you change datasets
