@@ -66,7 +66,7 @@ class SustainabilityConfig:
 
     FALLBACK_COUNTRY_LABEL 只用于日志说明，帮助你在 log 里看到写的是什么。
     """
-    FIXED_COUNTRY_ISO: str | None = "MYS"      # 例如 "MYS" 或 "CHN"，不想固定就保持 None
+    FIXED_COUNTRY_ISO: str | None = None     # 例如 "MYS" 或 "CHN"，不想固定就保持 None
     FALLBACK_COUNTRY_LABEL: str = "Canada"    # 仅用于说明文字
 
 # --- 数据集配置 (Dataset Configuration) ---
