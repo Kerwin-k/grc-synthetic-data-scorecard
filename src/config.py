@@ -118,6 +118,42 @@ class DatasetConfig:
     META_FILE = RAW_DATA_FILE.replace(".csv", "_metadata.json")
     METADATA_PATH = os.path.join(PathConfig.METADATA_DIR, META_FILE)
 
+class RAGThresholdConfig:
+    """
+    所有记分卡 RAG 阈值在这里集中配置。
+    后面 grc_translator.py 会从这里读取，不要在那边写死常数。
+    """
+
+    # 1) Quality / Fidelity（越高越好）
+    # JSD：接近 1 表示分布很像
+    QUALITY_JSD = {"green": 0.90, "amber": 0.80}
+
+    # NMI：相关性越高越好
+    QUALITY_NMI = {"green": 0.80, "amber": 0.60}
+
+    # 2) Utility（越高越好）
+    # TSTR F1，可以按任务难度调整
+    UTILITY_TSTR_F1 = {"green": 0.76, "amber": 0.70}
+
+    # 3) Risk（越低越好）
+    # MIA AUC：越高隐私风险越大
+    PRIVACY_MIA = {"green": 0.55, "amber": 0.65}
+
+    # Fairness 平均差：越接近 0 越公平
+    FAIRNESS = {"green": 0.10, "amber": 0.20}
+
+    # 4) Sustainability（越低越好）
+    # 单次实验的 CO2（kg）
+    # < 0.005 kg 视为 Green；0.005–0.05 kg Amber；>0.05 kg Red
+    SUSTAIN_CO2 = {"green": 0.005, "amber": 0.05}
+
+    # 如果所有模型的 CO2 都低于这个阈值，认为整体排放“接近 0”，
+    # 不再在它们之间分红黄绿（后面统一标 Green）。
+    SUSTAIN_CO2_NEAR_ZERO = 1e-3  # 0.001 kg = 1 g
+
+    # 训练时间（秒）阈值示例：<60s Green，60–300s Amber，>300s Red
+    SUSTAIN_TIME = {"green": 60.0, "amber": 300.0}
+
 
 
 # --- 3. 模型训练配置 (Model Training Configuration) ---
@@ -162,9 +198,6 @@ class GRCConfig:
         'FAIR': {'green': 0.1, 'amber': 0.2}  # 越低越好 / Lower-is-better
     }
 
-    # [!!] 修正: 将所有标签更改为英文以修复“乱码”
-    # [!!] Fix: Change all labels to English to fix "mojibake"
-    #
     # 映射: (类别, 指标) -> (JSON 键, 阈值, 逻辑)
     # Mapping: (Category, Metric) -> (JSON key, Threshold, Logic)
     METRIC_MAP = {

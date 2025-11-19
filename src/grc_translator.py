@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
 import matplotlib.patches as mpatches
+from src.config import MODELS_CONFIG, RAGThresholdConfig
 from textwrap import fill
 
 # --- 配置日志 / Configure logging ---
@@ -35,13 +36,48 @@ FAIR_THRESHOLDS = {'green': 0.1, 'amber': 0.2}  # <0.1=G, 0.1-0.2=A, >0.2=R
 # [!!] 修正: 将所有 'display_name' 更改为英文以修复“乱码” [Image 11]
 # [!!] Fix: Change all 'display_name' to English to fix "mojibake" [Image 11]
 METRIC_MAP = {
-    'fidelity_jsd_avg': {'thresholds': JSD_THRESHOLDS, 'display_name': 'Quality: Distribution (JSD Score)'},
-    'fidelity_nmi_avg': {'thresholds': NMI_THRESHOLDS, 'display_name': 'Quality: Correlation (NMI Score)'},
-    'utility_tstr_f1': {'thresholds': TSTR_THRESHOLDS, 'display_name': 'Utility: ML (TSTR F1)'},
-    'privacy_mia_auc': {'thresholds': MIA_THRESHOLDS, 'display_name': 'Risk: Privacy (MIA AUC)'},
-    'avg_fairness': {'thresholds': FAIR_THRESHOLDS, 'display_name': 'Risk: Fairness (Avg Diff)'},
-    'co2_eq_kg': {'thresholds': None, 'display_name': 'Sustainability: CO2 Emissions (kg)'},
-    'training_time_sec': {'thresholds': None, 'display_name': 'Sustainability: Training Time (s)'}
+    # Quality / Fidelity
+    "fidelity_jsd_avg": {
+        "category": "Quality",
+        "display_name": "Distribution (JSD Score)",
+        "thresholds": RAGThresholdConfig.QUALITY_JSD,
+    },
+    "fidelity_nmi_avg": {
+        "category": "Quality",
+        "display_name": "Correlation (NMI Score)",
+        "thresholds": RAGThresholdConfig.QUALITY_NMI,
+    },
+
+    # Utility
+    "utility_tstr_f1": {
+        "category": "Utility",
+        "display_name": "ML (TSTR F1)",
+        "thresholds": RAGThresholdConfig.UTILITY_TSTR_F1,
+    },
+
+    # Risk
+    "privacy_mia_auc": {
+        "category": "Risk",
+        "display_name": "Privacy (MIA AUC)",
+        "thresholds": RAGThresholdConfig.PRIVACY_MIA,
+    },
+    "avg_fairness": {
+        "category": "Risk",
+        "display_name": "Fairness (Avg Diff)",
+        "thresholds": RAGThresholdConfig.FAIRNESS,
+    },
+
+    # Sustainability
+    "co2_eq_kg": {
+        "category": "Sustainability",
+        "display_name": "CO2 Emissions (kg)",
+        "thresholds": RAGThresholdConfig.SUSTAIN_CO2,
+    },
+    "training_time_sec": {
+        "category": "Sustainability",
+        "display_name": "Training Time (s)",
+        "thresholds": RAGThresholdConfig.SUSTAIN_TIME,
+    },
 }
 
 # [!!] 新增: 用于可视化的 RAG 颜色 / New: RAG colors for visualization [1]
@@ -51,160 +87,151 @@ RAG_COLORS = {
     "Red":   "#F4B4AE",   # 柔和红色（偏珊瑚）
     "N/A":   "#E6E6E6",   # 中性灰
 }
-def _get_rag_status(metric_name, value, thresholds):
+def _get_rag_status(metric_key: str, value: float, thresholds: dict) -> str:
     """
-    辅助函数，用于分配 RAG 状态。
-    Helper function to assign RAG status.
+    通用 RAG 逻辑：
+    - 对 JSD / NMI / TSTR：越高越好
+    - 对 MIA / FAIR / CO2 / 时间：越低越好
     """
     if pd.isna(value):
         return "N/A"
 
-    # '越高越好' 的指标 (NMI, TSTR, JSD Score)
-    # 'Higher is better' metrics (NMI, TSTR, JSD Score)
-    if metric_name in ['fidelity_nmi_avg', 'utility_tstr_f1', 'fidelity_jsd_avg']:
-        if value >= thresholds['green']: return "Green"
-        if value >= thresholds['amber']: return "Amber"
+    hi_better = {"fidelity_jsd_avg", "fidelity_nmi_avg", "utility_tstr_f1"}
+    lo_better = {
+        "privacy_mia_auc",
+        "avg_fairness",
+        "co2_eq_kg",
+        "training_time_sec",
+    }
+
+    green = thresholds["green"]
+    amber = thresholds["amber"]
+
+    if metric_key in hi_better:
+        if value >= green:
+            return "Green"
+        if value >= amber:
+            return "Amber"
         return "Red"
-    # '越低越好' 的指标 (MIA, Fairness)
-    # 'Lower is better' metrics (MIA, Fairness)
-    else:
-        if value <= thresholds['green']: return "Green"
-        if value <= thresholds['amber']: return "Amber"
+
+    if metric_key in lo_better:
+        if value <= green:
+            return "Green"
+        if value <= amber:
+            return "Amber"
         return "Red"
+
+    return "N/A"
 
 
 def create_grc_scorecard(all_metrics, models_config):
     """
-    将原始指标字典转化为 GRC 就绪的、人类可读的 DataFrame。
-    Transforms the raw metrics dict into a GRC-ready, human-readable DataFrame.
+    将原始 metrics_report.json 转成 GRC 记分卡 DataFrame：
+    MultiIndex 行（Category, Metric），列为 (Model, Score/RAG)。
+    RAG 阈值全部来自 config.RAGThresholdConfig。
     """
-    scorecard_data = []
+    scorecard_rows = []
 
-    # ---- 先看 Sustainability coverage 情况 ----
-    coverage_values = [
-        m.get("sustainability_coverage")
-        for m in all_metrics.values()
-        if "sustainability_coverage" in m
-    ]
+    # --- 计算 CO2 的整体范围，用于 near-zero 保护 ---
+    co2_vals = []
+    for m in all_metrics.values():
+        cov = m.get("sustainability_coverage", "full")
+        v = m.get("co2_eq_kg")
+        if cov == "full" and v is not None and not pd.isna(v):
+            co2_vals.append(float(v))
 
-    any_partial = any(c == "partial" for c in coverage_values)
-    all_none = (not coverage_values) or all(
-        c in (None, "none") for c in coverage_values
+    if co2_vals:
+        co2_max = float(np.nanmax(co2_vals))
+    else:
+        co2_max = None
+
+    co2_near_zero = (
+        co2_max is not None
+        and co2_max < RAGThresholdConfig.SUSTAIN_CO2_NEAR_ZERO
     )
 
-    # 行名后缀：有 partial → [*]，全部 none → [N/A]
-    sustainability_label_suffix = ""
-    if any_partial and not all_none:
-        sustainability_label_suffix = " [*]"
-    elif all_none:
-        sustainability_label_suffix = " [N/A]"
-
-    # ---- 只用 coverage == full 的模型来算 co2/time 的基线 ----
-    all_co2 = [
-        m.get("co2_eq_kg", np.inf)
-        for m in all_metrics.values()
-        if (m.get("co2_eq_kg") is not None)
-        and (m.get("sustainability_coverage") == "full")
-    ]
-    min_co2 = min(all_co2) if all_co2 else np.inf
-
-    all_time = [
-        m.get("training_time_sec", np.inf)
-        for m in all_metrics.values()
-        if (m.get("training_time_sec") is not None)
-        and (m.get("sustainability_coverage") == "full")
-    ]
-    min_time = min(all_time) if all_time else np.inf
-
-    # ---- 遍历模型，构造每一行 ----
+    # --- 遍历每个模型 ---
     for model_name, metrics in all_metrics.items():
-
-        # 聚合公平性指标 / Aggregate fairness metrics
-        fair_metrics = [
-            v for k, v in metrics.items()
+        # 聚合公平性为 avg_fairness
+        fair_vals = [
+            v
+            for k, v in metrics.items()
             if k.startswith("fairness_") and pd.notna(v)
         ]
-        avg_fairness = np.nanmean(fair_metrics) if fair_metrics else np.nan
-        metrics["avg_fairness"] = avg_fairness  # 添加以便映射 / Add for mapping
+        if fair_vals:
+            metrics["avg_fairness"] = float(np.nanmean(fair_vals))
+        else:
+            metrics["avg_fairness"] = np.nan
 
-        coverage = metrics.get("sustainability_coverage")
+        coverage = metrics.get("sustainability_coverage", "full")
 
-        # --- 定义记分卡行 / Define scorecard rows ---
-        for key, config in METRIC_MAP.items():
-            if key not in metrics:
+        # 针对每个我们关心的指标填一行
+        for metric_key, cfg in METRIC_MAP.items():
+            if metric_key not in metrics:
                 continue
 
-            value = metrics.get(key)
-            status = "N/A"
+            raw_value = metrics.get(metric_key)
+            value = raw_value
+            rag = "N/A"
 
-            # ⭐ 对可持续性两个指标：只要 coverage 不是 full，一律视为 N/A（灰色）
-            if key in ("co2_eq_kg", "training_time_sec") and coverage != "full":
+            # 可持续性：如果 coverage 不是 full，则标为 N/A（表示只测到部分/没测到）
+            if metric_key == "co2_eq_kg" and coverage != "full":
                 value = np.nan
-                status = "N/A"
+                rag = "N/A"
             else:
-                if config["thresholds"] is not None:
-                    # 使用绝对阈值 / Use absolute thresholds
-                    status = _get_rag_status(key, value, config["thresholds"])
+                thresholds = cfg["thresholds"]
+                if metric_key == "co2_eq_kg" and co2_near_zero and pd.notna(value):
+                    # ⭐ 所有模型 CO2 都极小：不在它们之间搞红黄绿差异，统一 Green
+                    rag = "Green"
                 elif pd.notna(value):
-                    # 使用相对 RAG 状态进行可持续性排名 / Use relative RAG for sustainability
-                    if key == "co2_eq_kg":
-                        if value <= (min_co2 * 1.1):
-                            status = "Green"  # 10% 容差
-                        elif value <= (min_co2 * 2.0):
-                            status = "Amber"  # 2倍以内
-                        else:
-                            status = "Red"
-                    elif key == "training_time_sec":
-                        if value <= (min_time * 1.1):
-                            status = "Green"
-                        elif value <= (min_time * 2.0):
-                            status = "Amber"
-                        else:
-                            status = "Red"
+                    rag = _get_rag_status(metric_key, float(value), thresholds)
+                else:
+                    rag = "N/A"
 
-            # 拆分英文显示名称 / Split English display name
-            category, metric_display = config["display_name"].split(": ")
+            # ------------ 这里新增：给可持续性行加 [*] / [N/A] 标记 ------------
+            metric_label = cfg["display_name"]
+            if cfg["category"] == "Sustainability":
+                if coverage == "partial":
+                    metric_label += " [*]"
+                elif coverage != "full":
+                    metric_label += " [N/A]"
+            # -------------------------------------------------------------
 
-            # 对 Sustainability 两个指标加上 [*] / [N/A] 后缀
-            if key in ("co2_eq_kg", "training_time_sec") and sustainability_label_suffix:
-                metric_display = metric_display + sustainability_label_suffix
-
-            scorecard_data.append(
+            scorecard_rows.append(
                 {
+                    "Category": cfg["category"],
+                    "Metric": metric_label,  # ← 用带标记的行名
                     "Model": model_name,
-                    "Category": category,
-                    "Metric": metric_display,
                     "Score": value,
-                    "RAG": status,
+                    "RAG": rag,
                 }
             )
 
-    # --- 透视 DataFrame / Pivot the DataFrame ---
-    df = pd.DataFrame(scorecard_data)
+    df = pd.DataFrame(scorecard_rows)
 
-    scorecard_pivot = df.pivot_table(
+    # 透视成 MultiIndex 记分卡
+    pivot = df.pivot_table(
         index=["Category", "Metric"],
         columns="Model",
         values=["Score", "RAG"],
         aggfunc="first",
     )
 
-    # 重新排序列以实现逻辑呈现 / Reorder columns for logical presentation
-    scorecard_pivot = scorecard_pivot.swaplevel(0, 1, axis=1)
+    # 列层级换顺序：外层是 Model，内层是 Score/RAG
+    pivot = pivot.swaplevel(0, 1, axis=1)
 
-    # 确保模型和指标的顺序 / Ensure model and metric order
     model_order = list(models_config.keys())
     metric_order = ["Score", "RAG"]
 
-    scorecard_pivot = scorecard_pivot.reindex(
+    # 确保列顺序：按 config 里模型顺序 + ["Score","RAG"]
+    pivot = pivot.reindex(
         columns=pd.MultiIndex.from_product([model_order, metric_order])
     )
 
-    # 按类别排序索引 / Sort index by Category
-    scorecard_pivot = scorecard_pivot.sort_index(level='Category', sort_remaining=False)
+    # 按 Category 排行
+    pivot = pivot.sort_index(level="Category", sort_remaining=False)
 
-    return scorecard_pivot
-
+    return pivot
 
 def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     """
