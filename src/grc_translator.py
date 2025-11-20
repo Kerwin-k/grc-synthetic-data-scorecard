@@ -1,42 +1,26 @@
+import os
+import json
+import logging
 import textwrap
 
-import pandas as pd
 import numpy as np
-import json
-import os
-import logging
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
-
 import matplotlib.patches as mpatches
-from src.config import MODELS_CONFIG, RAGThresholdConfig
-from textwrap import fill
 
-# --- 配置日志 / Configure logging ---
-# [!!] 修正: 将日志级别设置为 INFO，并将消息更改为英文
-# [!!] Fix: Set log level to INFO and change messages to English
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - INFO - %(message)s')
+from src.config import (
+    MODELS_CONFIG,
+    RAGThresholdConfig,
+    DatasetConfig,
+    ResourceConfig,
+)
 
-# --- GRC 启发式阈值 / GRC Heuristic Thresholds ---
-# 这些是您在论文中定义和论证的业务规则
-# These are the business rules you define and justify in your thesis
-#
-# [!!] 修正: JSD 分数 (1-JSD) 越高越好 [1]
-# [!!] Fix: JSD Score (1-JSD) is "higher is better" [1]
-JSD_THRESHOLDS = {'green': 0.9, 'amber': 0.8}  # >0.9=G, 0.8-0.9=A, <0.8=R
-# NMI: 越高越好 / Higher is better.
-NMI_THRESHOLDS = {'green': 0.8, 'amber': 0.6}  # >0.8=G, 0.6-0.8=A, <0.6=R
-# TSTR F1: 越高越好 / Higher is better.
-TSTR_THRESHOLDS = {'green': 0.76, 'amber': 0.70}
-# MIA AUC: 越低越好 / Lower is better. (0.5 是完美的 / 0.5 is perfect)
-MIA_THRESHOLDS = {'green': 0.55, 'amber': 0.65}  # <0.55=G, 0.55-0.65=A, >0.65=R
-# 公平性 (Avg Diff): 越低越好 / Lower is better. (0 是完美的 / 0 is perfect)
-FAIR_THRESHOLDS = {'green': 0.1, 'amber': 0.2}  # <0.1=G, 0.1-0.2=A, >0.2=R
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - INFO - %(message)s")
 
-# [!!] 修正: 将所有 'display_name' 更改为英文以修复“乱码” [Image 11]
-# [!!] Fix: Change all 'display_name' to English to fix "mojibake" [Image 11]
+# 指标映射配置：将原始指标映射到 GRC 类别
+# Metric Mapping: Maps raw metrics to GRC categories
 METRIC_MAP = {
-    # Quality / Fidelity
     "fidelity_jsd_avg": {
         "category": "Quality",
         "display_name": "Distribution (JSD Score)",
@@ -47,15 +31,11 @@ METRIC_MAP = {
         "display_name": "Correlation (NMI Score)",
         "thresholds": RAGThresholdConfig.QUALITY_NMI,
     },
-
-    # Utility
     "utility_tstr_f1": {
         "category": "Utility",
         "display_name": "ML (TSTR F1)",
         "thresholds": RAGThresholdConfig.UTILITY_TSTR_F1,
     },
-
-    # Risk
     "privacy_mia_auc": {
         "category": "Risk",
         "display_name": "Privacy (MIA AUC)",
@@ -66,8 +46,6 @@ METRIC_MAP = {
         "display_name": "Fairness (Avg Diff)",
         "thresholds": RAGThresholdConfig.FAIRNESS,
     },
-
-    # Sustainability
     "co2_eq_kg": {
         "category": "Sustainability",
         "display_name": "CO2 Emissions (kg)",
@@ -80,22 +58,24 @@ METRIC_MAP = {
     },
 }
 
-# [!!] 新增: 用于可视化的 RAG 颜色 / New: RAG colors for visualization [1]
+# 颜色方案 / Color Scheme
 RAG_COLORS = {
-    "Green": "#B7E1CD",   # 柔和绿色
-    "Amber": "#FFE9A3",   # 柔和琥珀色
-    "Red":   "#F4B4AE",   # 柔和红色（偏珊瑚）
-    "N/A":   "#E6E6E6",   # 中性灰
+    "Green": "#B7E1CD",
+    "Amber": "#FFE9A3",
+    "Red": "#F4B4AE",
+    "N/A": "#E6E6E6",
 }
+
+
 def _get_rag_status(metric_key: str, value: float, thresholds: dict) -> str:
     """
-    通用 RAG 逻辑：
-    - 对 JSD / NMI / TSTR：越高越好
-    - 对 MIA / FAIR / CO2 / 时间：越低越好
+    根据阈值确定 RAG 状态（支持“越高越好”和“越低越好”）。
+    Determine RAG status based on thresholds (supports high-is-better and low-is-better).
     """
     if pd.isna(value):
         return "N/A"
 
+    # 定义指标方向 / Define metric direction
     hi_better = {"fidelity_jsd_avg", "fidelity_nmi_avg", "utility_tstr_f1"}
     lo_better = {
         "privacy_mia_auc",
@@ -126,46 +106,35 @@ def _get_rag_status(metric_key: str, value: float, thresholds: dict) -> str:
 
 def create_grc_scorecard(all_metrics, models_config):
     """
-    将原始 metrics_report.json 转成 GRC 记分卡 DataFrame：
-    MultiIndex 行（Category, Metric），列为 (Model, Score/RAG)。
-    RAG 阈值全部来自 config.RAGThresholdConfig。
+    将 metrics_report.json 转换为多级索引的记分卡 DataFrame。
+    Convert metrics_report.json into a MultiIndex Scorecard DataFrame.
     """
-    scorecard_rows = []
+    rows = []
 
-    # --- 计算 CO2 的整体范围，用于 near-zero 保护 ---
+    # 计算 CO2 全局最大值，用于“接近零”逻辑
+    # Calculate global CO2 max for near-zero logic
     co2_vals = []
     for m in all_metrics.values():
         cov = m.get("sustainability_coverage", "full")
         v = m.get("co2_eq_kg")
         if cov == "full" and v is not None and not pd.isna(v):
             co2_vals.append(float(v))
-
-    if co2_vals:
-        co2_max = float(np.nanmax(co2_vals))
-    else:
-        co2_max = None
-
+    co2_max = float(np.nanmax(co2_vals)) if co2_vals else None
     co2_near_zero = (
-        co2_max is not None
-        and co2_max < RAGThresholdConfig.SUSTAIN_CO2_NEAR_ZERO
+            co2_max is not None and co2_max < RAGThresholdConfig.SUSTAIN_CO2_NEAR_ZERO
     )
 
-    # --- 遍历每个模型 ---
     for model_name, metrics in all_metrics.items():
-        # 聚合公平性为 avg_fairness
+        # 聚合公平性指标 / Aggregate fairness
         fair_vals = [
-            v
-            for k, v in metrics.items()
-            if k.startswith("fairness_") and pd.notna(v)
+            v for k, v in metrics.items() if k.startswith("fairness_") and pd.notna(v)
         ]
-        if fair_vals:
-            metrics["avg_fairness"] = float(np.nanmean(fair_vals))
-        else:
-            metrics["avg_fairness"] = np.nan
+        metrics["avg_fairness"] = (
+            float(np.nanmean(fair_vals)) if fair_vals else np.nan
+        )
 
         coverage = metrics.get("sustainability_coverage", "full")
 
-        # 针对每个我们关心的指标填一行
         for metric_key, cfg in METRIC_MAP.items():
             if metric_key not in metrics:
                 continue
@@ -174,42 +143,40 @@ def create_grc_scorecard(all_metrics, models_config):
             value = raw_value
             rag = "N/A"
 
-            # 可持续性：如果 coverage 不是 full，则标为 N/A（表示只测到部分/没测到）
+            # 处理可持续性覆盖率 / Handle sustainability coverage
             if metric_key == "co2_eq_kg" and coverage != "full":
                 value = np.nan
                 rag = "N/A"
             else:
                 thresholds = cfg["thresholds"]
                 if metric_key == "co2_eq_kg" and co2_near_zero and pd.notna(value):
-                    # ⭐ 所有模型 CO2 都极小：不在它们之间搞红黄绿差异，统一 Green
                     rag = "Green"
                 elif pd.notna(value):
                     rag = _get_rag_status(metric_key, float(value), thresholds)
                 else:
                     rag = "N/A"
 
-            # ------------ 这里新增：给可持续性行加 [*] / [N/A] 标记 ------------
+            # 添加覆盖率标记 / Add coverage markers
             metric_label = cfg["display_name"]
             if cfg["category"] == "Sustainability":
                 if coverage == "partial":
                     metric_label += " [*]"
                 elif coverage != "full":
                     metric_label += " [N/A]"
-            # -------------------------------------------------------------
 
-            scorecard_rows.append(
+            rows.append(
                 {
                     "Category": cfg["category"],
-                    "Metric": metric_label,  # ← 用带标记的行名
+                    "Metric": metric_label,
                     "Model": model_name,
                     "Score": value,
                     "RAG": rag,
                 }
             )
 
-    df = pd.DataFrame(scorecard_rows)
+    df = pd.DataFrame(rows)
 
-    # 透视成 MultiIndex 记分卡
+    # 透视表转换 / Pivot
     pivot = df.pivot_table(
         index=["Category", "Metric"],
         columns="Model",
@@ -217,27 +184,63 @@ def create_grc_scorecard(all_metrics, models_config):
         aggfunc="first",
     )
 
-    # 列层级换顺序：外层是 Model，内层是 Score/RAG
     pivot = pivot.swaplevel(0, 1, axis=1)
-
     model_order = list(models_config.keys())
     metric_order = ["Score", "RAG"]
-
-    # 确保列顺序：按 config 里模型顺序 + ["Score","RAG"]
     pivot = pivot.reindex(
         columns=pd.MultiIndex.from_product([model_order, metric_order])
     )
 
-    # 按 Category 排行
     pivot = pivot.sort_index(level="Category", sort_remaining=False)
 
     return pivot
 
+
+def _infer_sample_and_coverage_text():
+    """
+    推断样本信息文本。
+    Infer sample info text.
+    """
+    effective_rows = getattr(DatasetConfig, "SAMPLE_SIZE", None)
+    if effective_rows is None:
+        effective_rows = getattr(ResourceConfig, "MAX_ROWS_TSTR", None)
+
+    stratified = getattr(DatasetConfig, "STRATIFY_BY_TARGET", False)
+
+    # 尝试推断原始行数 / Try to infer original rows
+    original_rows = None
+    try:
+        raw_path = getattr(DatasetConfig, "RAW_PATH", None)
+        if raw_path and os.path.exists(raw_path):
+            with open(raw_path, "r", errors="ignore") as f:
+                original_rows = sum(1 for _ in f) - 1
+    except Exception as e:
+        logging.warning(f"Failed to infer original dataset size: {e}")
+
+    if effective_rows is not None:
+        if original_rows is not None and original_rows > effective_rows:
+            sample_info = (
+                f"Effective sample size: {effective_rows:,} rows "
+                f"(original dataset: {original_rows:,} rows)."
+            )
+        else:
+            sample_info = f"Effective sample size: {effective_rows:,} rows."
+    else:
+        sample_info = "Effective sample size is configuration-dependent."
+
+    if stratified:
+        sampling_info = "Sampling method: stratified by target variable."
+    else:
+        sampling_info = "Sampling method: random sampling (no stratification)."
+
+    return sample_info, sampling_info, effective_rows, stratified
+
+
 def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     """
-    Generate a publication-quality GRC scorecard figure.
+    生成高质量的 GRC 记分卡图像。
+    Generate a high-quality GRC scorecard figure.
     """
-    # ---- 0. 取 Score / RAG ----
     try:
         score_data = scorecard_df.xs("Score", level=1, axis=1)
         rag_data = scorecard_df.xs("RAG", level=1, axis=1)
@@ -255,17 +258,30 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         project_root = os.path.dirname(script_dir)
         output_path = os.path.join(project_root, "results", "grc_scorecard.png")
 
-    # ---- 1. 画布 & GridSpec ----
+    sample_info_line, sampling_line, effective_rows, stratified = (
+        _infer_sample_and_coverage_text()
+    )
+
+    # 检查是否需要显示注脚 / Check for footnotes
+    metric_names = [
+        idx[1] if isinstance(idx, tuple) else str(idx) for idx in scorecard_df.index
+    ]
+    has_partial = any("[*]" in m for m in metric_names)
+    has_na = any("[N/A]" in m for m in metric_names)
+
+    # 图表尺寸 / Figure size
     fig_width = max(10.0, 2.6 * n_cols)
-    fig_height = max(8.0, 0.55 * n_rows + 6.5)
+    fig_height = max(9.0, 0.55 * n_rows + 7.2)
     fig = plt.figure(figsize=(fig_width, fig_height))
 
-    # 调整各块高度比例，让整体更紧凑：标题略薄、灰框略薄、矩阵略厚、图例略薄
-    outer_gs = fig.add_gridspec(4, 1, height_ratios=[0.65, 1.4, 3.5, 0.7])
+    # 布局设置 / Layout setup
+    outer_gs = fig.add_gridspec(
+        4, 1, height_ratios=[1.3, 1.4, 3.5, 1.4]
+    )
     ax_title = fig.add_subplot(outer_gs[0])
-    ax_text  = fig.add_subplot(outer_gs[1])
-    ax_heat  = fig.add_subplot(outer_gs[2])
-    ax_leg   = fig.add_subplot(outer_gs[3])
+    ax_text = fig.add_subplot(outer_gs[1])
+    ax_heat = fig.add_subplot(outer_gs[2])
+    ax_leg = fig.add_subplot(outer_gs[3])
 
     ax_title.set_axis_off()
     ax_text.set_axis_off()
@@ -273,119 +289,204 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
 
     for spine in ax_heat.spines.values():
         spine.set_visible(False)
-    # 让 y 轴刻度线贴在矩阵左边界
     ax_heat.spines["left"].set_position(("data", 0))
 
-    # ---- 2. 标题 & 副标题 ----
+    # ========= 1. 标题区域 / Header Area =========
     title = "GRC Quality, Risk, Sustainability and Utility Scorecard"
     subtitle = (
         "Comparison of synthetic data generators across governance-relevant dimensions: "
         "data quality, risk (privacy & fairness), sustainability, and utility."
     )
+
+    ax_title.set_xlim(0, 1)
+    ax_title.set_ylim(0, 1)
+
+    title_y = 0.82
+    subtitle_top_y = 0.58
+    subtitle_line_h = 0.08
+    sep_y = 0.35
+
+    # [OPTIMIZATION] Bringing sample info closer together
+    sample_y1 = 0.18  # was 0.22
+    sample_y2 = 0.11  # was 0.08 (gap reduced from 0.14 to 0.07)
+
     ax_title.text(
-        0.5, 0.80, title,
-        ha="center", va="top",
-        fontsize=17, fontweight="bold",
-        transform=ax_title.transAxes,
-    )
-    ax_title.text(
-        0.5, 0.25,
-        "\n".join(textwrap.wrap(subtitle, width=90)),
-        ha="center", va="top",
-        fontsize=10.5,
+        0.5,
+        title_y,
+        title,
+        ha="center",
+        va="top",
+        fontsize=18,
+        fontweight="bold",
         transform=ax_title.transAxes,
     )
 
-    # ---- 3. 上方两个灰框 ----
+    subtitle_lines = textwrap.wrap(subtitle, width=80)
+    for i, line in enumerate(subtitle_lines):
+        ax_title.text(
+            0.5,
+            subtitle_top_y - i * subtitle_line_h,
+            line,
+            ha="center",
+            va="top",
+            fontsize=11,
+            transform=ax_title.transAxes,
+        )
+
+    line = plt.Line2D(
+        [0.08, 0.92],
+        [sep_y, sep_y],
+        transform=ax_title.transAxes,
+        color="#CCCCCC",
+        linewidth=0.8,
+    )
+    ax_title.add_line(line)
+
+    # [OPTIMIZATION] Smaller font (8.8) and closer positioning
+    ax_title.text(
+        0.5,
+        sample_y1,
+        sample_info_line,
+        ha="center",
+        va="top",
+        fontsize=8.8,
+        color='#333333',
+        style="italic",
+        transform=ax_title.transAxes,
+    )
+    ax_title.text(
+        0.5,
+        sample_y2,
+        sampling_line,
+        ha="center",
+        va="top",
+        fontsize=8.8,
+        color='#333333',
+        style="italic",
+        transform=ax_title.transAxes,
+    )
+
+    # ========= 2. 文本说明框 / Gray Text Boxes =========
     ax_text.set_xlim(0, 1)
     ax_text.set_ylim(0, 1)
 
+    # [OPTIMIZATION] Extended box height to accommodate larger line spacing
+    left_box_y0 = 0.12  # lowered from 0.20
+    left_box_h = 0.86  # increased from 0.78
+    right_box_y0 = 0.12
+    right_box_h = 0.86
+
     left_box = FancyBboxPatch(
-        (0.02, 0.04), 0.45, 0.92,
+        (0.02, left_box_y0),
+        0.45,
+        left_box_h,
         boxstyle="round,pad=0.03",
-        linewidth=0.5, edgecolor="#DDDDDD", facecolor="#F9F9F9",
-        transform=ax_text.transAxes, zorder=0,
+        linewidth=0.6,
+        edgecolor="#DDDDDD",
+        facecolor="#F9F9F9",
+        transform=ax_text.transAxes,
+        zorder=0,
     )
     right_box = FancyBboxPatch(
-        (0.53, 0.04), 0.45, 0.92,
+        (0.53, right_box_y0),
+        0.45,
+        right_box_h,
         boxstyle="round,pad=0.03",
-        linewidth=0.5, edgecolor="#DDDDDD", facecolor="#F9F9F9",
-        transform=ax_text.transAxes, zorder=0,
+        linewidth=0.6,
+        edgecolor="#DDDDDD",
+        facecolor="#F9F9F9",
+        transform=ax_text.transAxes,
+        zorder=0,
     )
     ax_text.add_patch(left_box)
     ax_text.add_patch(right_box)
 
-    # ------------ 左框：Dimensions ------------
+    box_top_y = left_box_y0 + left_box_h
+
+    # Headers
+    # Moved slightly higher to give body text more room
+    title_y_in_box = box_top_y - 0.03
     ax_text.text(
-        0.045, 0.96, "Dimensions:",
-        ha="left", va="top",
-        fontsize=11.0, fontweight="bold",
+        0.045,
+        title_y_in_box,
+        "Dimensions:",
+        ha="left",
+        va="top",
+        fontsize=11.0,
+        fontweight="bold",
+        transform=ax_text.transAxes,
+    )
+    ax_text.text(
+        0.555,
+        title_y_in_box,
+        "How to read the scorecard",
+        ha="left",
+        va="top",
+        fontsize=11.0,
+        fontweight="bold",
         transform=ax_text.transAxes,
     )
 
+    # Content
     left_bullets = [
         "• Quality – how closely synthetic data matches the patterns and relationships in the real data.",
         "• Risk – privacy and fairness risk, including potential bias between groups and risk of re-identification.",
         "• Sustainability – CO\u2082 emissions and computational cost of generating the data. Lower is better.",
         "• Utility – downstream ML performance when models are trained on synthetic data and evaluated on real data (TSTR).",
     ]
-    # 稍微往下挪一点起始位置，同时减小行间距 & 段间距，避免溢出
-    left_y = 0.845
-    left_line_h = 0.065
-    left_block_extra = 0.045
-    left_wrap_width = 50
-
-    for bullet in left_bullets:
-        wrapped = textwrap.wrap(bullet, width=left_wrap_width)
-        if not wrapped:
-            continue
-        for j, line in enumerate(wrapped):
-            ax_text.text(
-                0.045,
-                left_y - j * left_line_h,
-                line,
-                ha="left", va="top",
-                fontsize=9.3,
-                transform=ax_text.transAxes,
-            )
-        total_h = len(wrapped) * left_line_h
-        left_y -= total_h + left_block_extra
-
-    # ------------ 右框：How to read the scorecard ------------
-    ax_text.text(
-        0.555, 0.96, "How to read the scorecard",
-        ha="left", va="top",
-        fontsize=11.0, fontweight="bold",
-        transform=ax_text.transAxes,
-    )
 
     right_bullets = [
         "• Each row is a metric under one of the four GRC dimensions (Quality, Risk, Sustainability, Utility).",
         "• Each column is a synthetic data generator (model).",
         "• Green / Amber / Red / Grey follow the legend below. Higher scores are better for quality and utility; lower scores are better for risk and sustainability.",
     ]
-    right_y = 0.845
-    right_line_h = 0.065
-    right_block_extra = 0.045
-    right_wrap_width = 44
 
-    for bullet in right_bullets:
-        wrapped = textwrap.wrap(bullet, width=right_wrap_width)
-        if not wrapped:
-            continue
-        for j, line in enumerate(wrapped):
-            ax_text.text(
-                0.555,
-                right_y - j * right_line_h,
-                line,
-                ha="left", va="top",
-                fontsize=9.3,
-                transform=ax_text.transAxes,
-            )
-        total_h = len(wrapped) * right_line_h
-        right_y -= total_h + right_block_extra
+    def _draw_paragraph_fixed(ax, bullets, x_start, start_y, wrap_width, transform):
+        import textwrap as _tw
 
-    # ---- 4. 记分卡矩阵 ----
+        # [OPTIMIZATION] Significantly increased spacing
+        line_height = 0.065  # Increased from 0.052
+        para_gap = 0.042  # Increased from 0.035
+
+        current_y = start_y
+        for idx, bullet in enumerate(bullets):
+            lines = _tw.wrap(bullet, width=wrap_width)
+            for line in lines:
+                ax.text(
+                    x_start,
+                    current_y,
+                    line,
+                    ha="left",
+                    va="top",
+                    fontsize=8.6,
+                    fontweight='normal',
+                    color='#222222',
+                    transform=transform,
+                )
+                current_y -= line_height
+            current_y -= para_gap
+
+    # Starting text position
+    text_start_y = box_top_y - 0.15
+
+    _draw_paragraph_fixed(
+        ax_text,
+        left_bullets,
+        x_start=0.045,
+        start_y=text_start_y,
+        wrap_width=55,
+        transform=ax_text.transAxes,
+    )
+    _draw_paragraph_fixed(
+        ax_text,
+        right_bullets,
+        x_start=0.555,
+        start_y=text_start_y,
+        wrap_width=47,
+        transform=ax_text.transAxes,
+    )
+
+    # ========= 3. Score Matrix =========
     ax_heat.set_xlim(-0.15, n_cols)
     ax_heat.set_ylim(0, n_rows)
     ax_heat.invert_yaxis()
@@ -398,135 +499,150 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
 
             ax_heat.add_patch(
                 plt.Rectangle(
-                    (j, i), 1, 1,
+                    (j, i),
+                    1,
+                    1,
                     facecolor=color,
-                    edgecolor="white",  # 改成白色
-                    linewidth=0.8,  # 稍微粗一点，让分隔清晰
+                    edgecolor="white",
+                    linewidth=0.8,
                 )
             )
-            # 尝试把 val 当 float 画，如果实在转不了就直接写 str(val)
             if pd.notna(val):
-                val_to_show = None
                 if isinstance(val, (int, float, np.floating)):
-                    val_to_show = f"{val:.3f}"
+                    text_val = f"{val:.3f}"
                 else:
                     try:
-                        val_to_show = f"{float(val):.3f}"
-                    except (TypeError, ValueError):
-                        val_to_show = str(val)
+                        text_val = f"{float(val):.3f}"
+                    except:
+                        text_val = str(val)
 
                 ax_heat.text(
-                    j + 0.5, i + 0.5,
-                    val_to_show,
-                    ha="center", va="center",
+                    j + 0.5,
+                    i + 0.5,
+                    text_val,
+                    ha="center",
+                    va="center",
                     fontsize=8.5,
                 )
 
-    # 列名（模型）
     ax_heat.set_xticks([j + 0.5 for j in range(n_cols)])
     ax_heat.set_xticklabels(score_data.columns.tolist(), fontsize=11)
-
-    # 行名：两行（维度 + 指标）
     y_centers = [i + 0.5 for i in range(n_rows)]
     ax_heat.set_yticks(y_centers)
     ax_heat.set_yticklabels([])
 
-    # 在画行名之前，加一条「维度之间」的淡分割线
-    prev_category = None
+    prev_cat = None
     for row_i, idx in enumerate(score_data.index):
         if isinstance(idx, tuple):
             category, metric = idx
         else:
             category, metric = "", str(idx)
-        if prev_category is not None and category != prev_category:
-            y = row_i  # 当前行上方的坐标
-            ax_heat.axhline(
-                y,
-                color="#DDDDDD",
-                linewidth=0.8,
-            )
-        prev_category = category
 
+        if prev_cat is not None and category != prev_cat:
+            ax_heat.axhline(row_i, color="#DDDDDD", linewidth=0.8)
+        prev_cat = category
         y = y_centers[row_i]
 
         ax_heat.text(
-            -0.02, y - 0.12,
+            -0.02,
+            y - 0.18,
             category,
-            ha="right", va="center",
+            ha="right",
+            va="center",
             fontsize=8.3,
             fontweight="bold",
             transform=ax_heat.transData,
         )
         ax_heat.text(
-            -0.02, y + 0.08,
+            -0.02,
+            y + 0.15,
             metric,
-            ha="right", va="center",
+            ha="right",
+            va="center",
             fontsize=8.1,
             transform=ax_heat.transData,
         )
 
-    # 轴标题：X 轴用 labelpad，Y 轴用 coords，避免和行名重叠
-    ax_heat.set_xlabel("Model", fontsize=11, labelpad=10)
+    ax_heat.set_xlabel("Model", fontsize=11, labelpad=8)
     ax_heat.set_ylabel("GRC assessment dimension", fontsize=11)
     ax_heat.yaxis.set_label_coords(-0.16, 0.5)
-
-    # 刻度线
     ax_heat.tick_params(axis="x", length=4, width=0.8)
     ax_heat.tick_params(axis="y", length=4, width=0.8)
 
-    # ---- 5. 底部图例 ----
-    legend_patches = [
+    # ========= 4. Legend & Footnotes =========
+    patches = [
         mpatches.Patch(color=RAG_COLORS["Green"], label="Green – Good / Low-Risk"),
         mpatches.Patch(color=RAG_COLORS["Amber"], label="Amber – Review Required"),
-        mpatches.Patch(color=RAG_COLORS["Red"],  label="Red – High-Risk"),
-        mpatches.Patch(color=RAG_COLORS["N/A"],  label="Grey – N/A"),
+        mpatches.Patch(color=RAG_COLORS["Red"], label="Red – High-Risk"),
+        mpatches.Patch(color=RAG_COLORS["N/A"], label="Grey – N/A"),
     ]
+
+    # [OPTIMIZATION] Pushed Legend DOWN to 0.60 to clear the "Model" label
     ax_leg.legend(
-        handles=legend_patches,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.25),
-        ncol=2,
+        handles=patches,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.60),
+        ncol=4,
         frameon=False,
         fontsize=9.5,
     )
-    # ---- 5.1 可持续性脚注：放在图例下方 ----
-    # 从 MultiIndex 中取出 Metric 文本，判断是否包含 [*] 或 [N/A]
-    metric_names = [idx[1] if isinstance(idx, tuple) else str(idx)
-                    for idx in scorecard_df.index]
-    has_partial = any("[*]" in name for name in metric_names)
-    has_na = any("[N/A]" in name for name in metric_names)
 
-    footnote_lines = []
+    # --- [FIX] 修复：重新添加注脚文本的生成逻辑 ---
+    # --- [FIX] Restore footnote text generation logic ---
+    footnote_texts = []
+
+    if effective_rows is not None:
+        if stratified:
+            fn1 = (
+                f"Evaluations in this thesis were performed on a fixed "
+                f"{effective_rows:,}-row stratified sample for reproducibility. "
+                "A resource-aware automatic mode is also available for "
+                "practical deployment."
+            )
+        else:
+            fn1 = (
+                "Evaluations in this thesis were performed on a fixed "
+                f"{effective_rows:,}-row sample for reproducibility. "
+                "A resource-aware automatic mode is also available for "
+                "practical deployment."
+            )
+        footnote_texts.append(fn1)
+
     if has_partial:
-        footnote_lines.append(
+        footnote_texts.append(
             "[*] Sustainability rows are based on partial energy measurements "
-            "(e.g., only CPU/RAM energy was available; GPU energy could not be "
-            "measured for at least one model)."
-        )
-    if has_na:
-        footnote_lines.append(
-            "[N/A] Sustainability metrics could not be computed for at least "
-            "one model because no valid energy/emissions data were available."
+            "(for example, only CPU/RAM energy was available; GPU energy "
+            "could not be measured for at least one model)."
         )
 
-    if footnote_lines:
+    if has_na:
+        footnote_texts.append(
+            "[N/A] Sustainability metrics could not be computed for at least "
+            "one model because no valid emissions data were available."
+        )
+
+    start_y = 0.35
+    gap_y = 0.25
+
+    for idx, text in enumerate(footnote_texts):
+        wrapped = "\n".join(textwrap.wrap(text, width=115))
+        y_pos = start_y - (idx * gap_y)
         ax_leg.text(
             0.5,
-            0.05,
-            "\n".join(textwrap.wrap(" ".join(footnote_lines), width=110)),
+            y_pos,
+            wrapped,
             ha="center",
-            va="bottom",
-            fontsize=8.0,
+            va="top",
+            fontsize=8.3,
             transform=ax_leg.transAxes,
         )
 
-    # ---- 6. 整体布局 ----
     plt.subplots_adjust(
-        left=0.18,   # 整体向左挪一点，缩小左侧留白
+        left=0.18,
         right=0.98,
         top=0.97,
         bottom=0.07,
-        hspace=0.18,  # 纵向间距更紧凑
+        hspace=0.05,
     )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -536,43 +652,28 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
 
 
 if __name__ == "__main__":
-    # 允许此脚本直接运行以进行测试 / Allow this script to be run directly for testing
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    metrics_path = os.path.join(project_root, "results", "metrics_report.json")
+    csv_path = os.path.join(project_root, "results", "grc_scorecard.csv")
 
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)  # 'src' 的上一级 / Parent of 'src'
-
-    METRICS_REPORT_PATH = os.path.join(PROJECT_ROOT, "results", "metrics_report.json")
-    GRC_SCORECARD_PATH = os.path.join(PROJECT_ROOT, "results", "grc_scorecard.csv")
-    GRC_IMAGE_PATH = os.path.join(PROJECT_ROOT, "results",
-                                  "grc_scorecard.png")  # [!!] 修正: 使用构建的路径 / Fix: Use built path
-
-    logging.info(f"Loading metrics from {METRICS_REPORT_PATH}...")
     try:
-        with open(METRICS_REPORT_PATH, 'r') as f:
+        with open(metrics_path, "r") as f:
             metrics_data = json.load(f)
 
-        # [!!] 修正: 从加载的数据中动态获取键
-        # [!!] Fix: Dynamically get keys from loaded data
         model_keys = list(metrics_data.keys())
-        mock_config = {key: {} for key in model_keys}
-        logging.info(f"Found models: {model_keys}")
+        mock_config = {k: {} for k in model_keys}
 
         scorecard = create_grc_scorecard(metrics_data, mock_config)
-        scorecard.to_csv(GRC_SCORECARD_PATH, float_format="%.3f")
-        logging.info(f"GRC Scorecard CSV saved to {GRC_SCORECARD_PATH}")
-
-        # [!!] 修正: 调用新函数时不带参数 (路径是自动的)
-        # [!!] Fix: Call new function without path argument (path is automatic)
+        scorecard.to_csv(csv_path, float_format="%.3f")
         save_scorecard_as_image(scorecard)
 
-        print("\n--- GRC Scorecard (Preview) ---")
+        print("Preview of GRC scorecard:")
         print(scorecard)
-        print("---------------------------------")
 
     except FileNotFoundError:
-        logging.error(f"Metrics report not found at {METRICS_REPORT_PATH}. Please run main.py first.")
+        logging.error(
+            f"Metrics report not found at {metrics_path}. Please run main.py first."
+        )
     except Exception as e:
         logging.error(f"Error generating scorecard: {e}")
-        import traceback
-
-        traceback.print_exc()

@@ -1,11 +1,6 @@
-"""Utilities for loading raw tabular datasets and preparing them for the
-synthetic data evaluation pipeline.
-
-The functions in this module are intentionally lightweight so that the
-project can be executed end-to-end without manual data preparation steps.
-They take care of reading the configured raw dataset, performing a small set
-of cleaning operations, persisting the processed dataset, and generating the
-SDV metadata artefacts required by the downstream components.
+"""
+加载原始表格数据并为合成数据评估流程做好准备的工具。
+Utilities for loading raw tabular datasets and preparing them for the synthetic data evaluation pipeline.
 """
 
 from __future__ import annotations
@@ -17,77 +12,137 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from sdv.metadata import SingleTableMetadata
+from sklearn.model_selection import StratifiedShuffleSplit
 
-from src.config import DatasetConfig
+from src.config import DatasetConfig, PathConfig
 
 logger = logging.getLogger(__name__)
 
 
 def _ensure_parent_dir(path: str) -> None:
-    """Create the parent directory for *path* if it does not already exist."""
-
+    """如果路径不存在，则创建父目录。 / Create the parent directory for *path* if it does not already exist."""
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
 
 
-def load_and_clean_data(raw_path: str, processed_path: str) -> Optional[pd.DataFrame]:
-    """Load the configured raw dataset and apply basic cleaning steps.
-
-    The cleaning intentionally stays minimal so it works for the Adult income
-    dataset shipped with the repository while still being easy to adapt for
-    future datasets.  The current steps are:
-
-    1. Read the CSV file from ``raw_path``.
-    2. Drop columns flagged in :class:`DatasetConfig`.
-    3. Trim whitespace from string columns and normalise their dtype to
-       ``str`` so downstream encoders behave deterministically.
-    4. Impute missing values (median for numeric, mode for categorical).
-    5. Persist the cleaned data to ``processed_path`` for reuse.
+def load_and_clean_data() -> pd.DataFrame:
     """
+    统一的数据加载入口 / Unified Data Loading Entry Point:
 
-    if not os.path.exists(raw_path):
-        logger.error("Raw data file not found at %s", raw_path)
-        return None
+    1. 从 RAW_DIR 读取原始 CSV / Read raw CSV from RAW_DIR
+    2. 中心化采样 / Centralized Sampling:
+       - 根据 DatasetConfig.SAMPLING_MODE 处理（full 或 fixed）
+       - 如果行数超过 SAMPLE_SIZE，执行分层或随机采样
+    3. 删除指定列 / Drop specified columns (COLS_TO_DROP)
+    4. 基础清洗 / Basic Cleaning:
+       - 去除空白字符 / Strip whitespace
+       - 统一缺失值标记 / Unify missing value markers
+       - 尝试转换为数值 / Attempt numeric conversion
+    5. 降精度 (float64 -> float32) 以节省内存 / Downcast float64 to float32
+    6. 保存处理后的数据 / Save processed data
+    """
+    raw_path = os.path.join(PathConfig.RAW_DIR, DatasetConfig.RAW_DATA_FILE)
+    logging.info(f"[DataLoader] Loading raw dataset from {raw_path}")
 
-    logger.info("Loading raw dataset from %s", raw_path)
-    try:
-        data = pd.read_csv(raw_path)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.error("Failed to load raw dataset: %s", exc, exc_info=True)
-        return None
+    df = pd.read_csv(raw_path)
 
-    # Drop user-specified columns if they are present.
-    if DatasetConfig.COLS_TO_DROP:
-        data = data.drop(columns=[col for col in DatasetConfig.COLS_TO_DROP if col in data.columns])
+    # ----------------------------
+    # 1) 中心化采样 / Centralized Sampling
+    # ----------------------------
+    mode = getattr(DatasetConfig, "SAMPLING_MODE", "fixed")
+    sample_size: Optional[int] = None
 
-    # Trim whitespace from string columns and ensure a consistent dtype.
-    for column in data.select_dtypes(include=["object", "string", "category"]).columns:
-        data[column] = data[column].astype(str).str.strip()
+    if mode == "full":
+        logging.info(
+            "[DataLoader] SAMPLING_MODE='full' -> using all %d rows without central down-sampling.",
+            len(df),
+        )
+        sample_size = None
+    else:
+        sample_size = DatasetConfig.SAMPLE_SIZE
+        logging.info(
+            "[DataLoader] SAMPLING_MODE='%s', SAMPLE_SIZE=%s "
+            "(rows > SAMPLE_SIZE will be down-sampled).",
+            mode,
+            str(sample_size),
+        )
 
-    # Basic imputation so downstream models do not fail on NaN values.
-    numeric_cols = data.select_dtypes(include=[np.number]).columns
-    categorical_cols = data.select_dtypes(exclude=[np.number]).columns
+    if sample_size is not None and len(df) > sample_size:
+        logging.info(
+            f"[DataLoader] Dataset has {len(df)} rows; "
+            f"downsampling to {sample_size} rows "
+            f"(stratify={getattr(DatasetConfig, 'STRATIFY_BY_TARGET', False)})."
+        )
+        if getattr(DatasetConfig, "STRATIFY_BY_TARGET", False) and DatasetConfig.TARGET_COLUMN in df.columns:
+            splitter = StratifiedShuffleSplit(
+                n_splits=1,
+                test_size=sample_size,
+                random_state=getattr(DatasetConfig, "RANDOM_STATE", 42),
+            )
+            y = df[DatasetConfig.TARGET_COLUMN]
+            _, sample_idx = next(splitter.split(df, y))
+            df = df.iloc[sample_idx].reset_index(drop=True)
+        else:
+            df = df.sample(
+                n=sample_size,
+                random_state=getattr(DatasetConfig, "RANDOM_STATE", 42),
+            ).reset_index(drop=True)
 
-    data[numeric_cols] = data[numeric_cols].apply(lambda col: col.fillna(col.median()))
+    logging.info("[DataLoader] Shape after central sampling: %s", df.shape)
 
-    def _fill_categorical(col: pd.Series) -> pd.Series:
-        if col.mode().empty:
-            return col.fillna("Unknown")
-        return col.fillna(col.mode().iloc[0])
+    # ----------------------------
+    # 2) 删除指定列 / Drop Columns
+    # ----------------------------
+    if getattr(DatasetConfig, "COLS_TO_DROP", None):
+        drop_cols = [c for c in DatasetConfig.COLS_TO_DROP if c in df.columns]
+        if drop_cols:
+            df = df.drop(columns=drop_cols)
+            logging.info("[DataLoader] Dropped columns: %s", drop_cols)
 
-    data[categorical_cols] = data[categorical_cols].apply(_fill_categorical)
+    # ----------------------------
+    # 3) 基础清洗 / Basic Cleaning
+    # ----------------------------
+    obj_cols = df.select_dtypes(include=["object"]).columns
+    for col in obj_cols:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.strip()
+            .replace({"": np.nan, "NA": np.nan, "NaN": np.nan})
+        )
 
+    # 尝试将对象列转换为数值 / Try converting object columns to numeric
+    for col in df.columns:
+        if df[col].dtype == "object":
+            try_num = pd.to_numeric(df[col], errors="ignore")
+            if pd.api.types.is_numeric_dtype(try_num):
+                df[col] = try_num
+
+    # ----------------------------
+    # 4) 降精度 / Downcasting
+    # ----------------------------
+    float_cols = df.select_dtypes(include=["float64"]).columns
+    for col in float_cols:
+        df[col] = df[col].astype("float32")
+
+    # ----------------------------
+    # 5) 持久化 / Persistence
+    # ----------------------------
+    processed_path = DatasetConfig.PROCESSED_PATH
     _ensure_parent_dir(processed_path)
-    data.to_csv(processed_path, index=False)
-    logger.info("Processed dataset saved to %s", processed_path)
+    df.to_csv(processed_path, index=False)
+    logging.info(f"[DataLoader] Processed dataset saved to {processed_path}")
+    logging.info(f"[DataLoader] Final dataset shape: {df.shape}")
 
-    return data
+    return df
 
 
 def generate_and_save_metadata(data: pd.DataFrame, metadata_path: str) -> SingleTableMetadata:
-    """Create SDV metadata for *data* and persist it to ``metadata_path``."""
-
+    """
+    为数据生成 SDV 元数据并保存。
+    Create SDV metadata for data and persist it.
+    """
     metadata = SingleTableMetadata()
     metadata.detect_from_dataframe(data)
 
