@@ -1,15 +1,16 @@
 import os
 import time
 import logging
-
+import numpy as np
 import pandas as pd
 from sdv.metadata import SingleTableMetadata
 from codecarbon import EmissionsTracker
+from sklearn.utils import resample
 
-# 导入配置 / Import configurations
+# 导入配置
 from src.config import DatasetConfig, PathConfig, MODELS_CONFIG, SustainabilityConfig, ResourceConfig
 
-# 导入 SDV 合成器类 / Import SDV synthesizer classes
+# 导入 SDV 合成器类
 from sdv.single_table import (
     GaussianCopulaSynthesizer,
     CTGANSynthesizer,
@@ -19,117 +20,103 @@ from sdv.single_table import (
 
 def _create_emissions_tracker_for_model(model_name: str):
     """
-    创建一个 EmissionsTracker 并尝试检测 GPU 及其能耗 API 的可用性。
-    Create an EmissionsTracker and attempt to detect GPU availability and energy API support.
+    创建一个 EmissionsTracker 并尝试检测 GPU。
     """
-    measure_gpu = False
-    gpu_note = "GPU energy not included (CPU + RAM only)."
-
-    try:
-        import pynvml
-
-        pynvml.nvmlInit()
-        device_count = pynvml.nvmlDeviceGetCount()
-
-        if device_count > 0:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            try:
-                # 尝试获取总能耗，确认 API 是否可用
-                # Attempt to get total energy consumption to verify API availability
-                pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
-                measure_gpu = True
-                gpu_note = "GPU energy included via NVML total energy API."
-            except pynvml.NVMLError:
-                measure_gpu = False
-                gpu_note = (
-                    "GPU detected but NVML total energy API not supported; "
-                    "GPU energy will NOT be included (CPU + RAM only)."
-                )
-
-        pynvml.nvmlShutdown()
-    except Exception as e:
-        measure_gpu = False
-        gpu_note = (
-            "No usable GPU NVML interface; GPU energy will NOT be included "
-            f"(CPU + RAM only). Detail: {type(e).__name__}"
-        )
-
-    logging.info(f"[Sustainability/{model_name}] {gpu_note}")
-
-    # 配置追踪器参数 / Configure tracker parameters
+    # 简化的追踪器初始化逻辑
     tracker_kwargs = {
         "project_name": f"thesis-sdg-{model_name}",
         "output_dir": PathConfig.EMISSIONS_DIR,
         "output_file": f"{model_name}_emissions.csv",
+        "save_to_file": True,
     }
 
     if SustainabilityConfig.FIXED_COUNTRY_ISO:
-        # 使用固定国家代码，确保可复现性 / Use fixed country code for reproducibility
         tracker_kwargs["country_iso_code"] = SustainabilityConfig.FIXED_COUNTRY_ISO
-        logging.info(
-            f"[Sustainability/{model_name}] Using fixed country_iso_code = "
-            f"{SustainabilityConfig.FIXED_COUNTRY_ISO} from config.py."
-        )
-    else:
-        # 使用自动地理定位 / Use automatic geolocation
-        logging.info(
-            f"[Sustainability/{model_name}] Using CodeCarbon automatic "
-            f"geolocation; if lookup fails, CodeCarbon falls back to "
-            f"'{SustainabilityConfig.FALLBACK_COUNTRY_LABEL}'."
-        )
 
-    tracker = EmissionsTracker(**tracker_kwargs)
-    return tracker, measure_gpu, gpu_note
+    try:
+        tracker = EmissionsTracker(**tracker_kwargs)
+        return tracker
+    except Exception as e:
+        logging.warning(f"[Sustainability] Failed to init tracker: {e}")
+        return None
+
 
 def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFrame:
     """
-    为单个模型准备训练数据：复制、精度压缩和降采样。
-    Prepare training data for a single model: copy, downcast types, and down-sample.
+    安全地准备训练数据：
+    1. 先降采样到 MAX_TRAIN_ROWS (防止 OOM)
+    2. 再进行类平衡 (防止 Mode Collapse)
     """
     df = full_df.copy()
+    target_col = getattr(DatasetConfig, "TARGET_COLUMN", "TARGET")
+    max_rows = ResourceConfig.MAX_TRAIN_ROWS_PER_MODEL
 
-    # 1. 精度压缩：float64->float32, int64->int32 / Dtype downcasting
+    # --- 步骤 1: 预先降采样 (Pre-emptive Downsampling) ---
+    # 在做任何处理前，先限制总行数，防止后续处理撑爆内存
+    if max_rows is not None and len(df) > max_rows:
+        logging.info(f"[{model_name}] Downsampling from {len(df)} to {max_rows} before balancing.")
+        if target_col in df.columns:
+            # 分层抽样以保持原始比例
+            df = df.groupby(target_col, group_keys=False).apply(
+                lambda x: x.sample(frac=max_rows / len(full_df), random_state=42)
+            )
+        else:
+            df = df.sample(n=max_rows, random_state=42)
+
+    # --- 步骤 2: 处理类别不平衡 (Class Balancing) ---
+    # 只有当目标列存在且确实不平衡时才执行
+    if target_col in df.columns:
+        counts = df[target_col].value_counts()
+        if len(counts) == 2:  # 仅处理二分类
+            minority_class = counts.idxmin()
+            majority_class = counts.idxmax()
+
+            min_count = counts[minority_class]
+            maj_count = counts[majority_class]
+
+            # 如果比例小于 30%，则进行平衡处理
+            if min_count / maj_count < 0.3:
+                logging.info(f"[{model_name}] Balancing classes (Minority ratio: {min_count / maj_count:.2%})...")
+
+                df_minority = df[df[target_col] == minority_class]
+                df_majority = df[df[target_col] == majority_class]
+
+                # 策略：多数类下采样，少数类过采样，使两者数量相等
+                # 目标数量 = 当前总行数的一半 (确保总数不超过 max_rows)
+                target_count_per_class = len(df) // 2
+
+                # 1. 多数类下采样
+                df_maj_down = resample(df_majority,
+                                       replace=False,
+                                       n_samples=target_count_per_class,
+                                       random_state=42)
+
+                # 2. 少数类过采样
+                df_min_up = resample(df_minority,
+                                     replace=True,
+                                     n_samples=target_count_per_class,
+                                     random_state=42)
+
+                df = pd.concat([df_maj_down, df_min_up])
+                logging.info(f"[{model_name}] Balanced. New shape: {df.shape} (50/50 split)")
+
+    # --- 步骤 3: 精度压缩 (Downcasting) ---
     if ResourceConfig.ENABLE_DTYPE_DOWNCAST:
         float_cols = df.select_dtypes(include=["float64"]).columns
-        int_cols = df.select_dtypes(include=["int64"]).columns
-
         if len(float_cols) > 0:
             df[float_cols] = df[float_cols].astype("float32")
-        if len(int_cols) > 0:
-            df[int_cols] = df[int_cols].astype("int32")
 
-    # 2. 行数降采样以避免内存溢出 / Down-sampling to prevent OOM
-    max_rows = ResourceConfig.MAX_TRAIN_ROWS_PER_MODEL
-    if max_rows is not None and len(df) > max_rows:
-        logging.warning(
-            "[%s] Training data has %d rows; down-sampling to %d rows to reduce OOM risk.",
-            model_name,
-            len(df),
-            max_rows,
-        )
-        df = df.sample(n=max_rows, random_state=42).reset_index(drop=True)
-    else:
-        logging.info(
-            "[%s] Using all %d rows for training (no down-sampling applied).",
-            model_name,
-            len(df),
-        )
-
+    # 最后打乱顺序
+    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
     return df
 
 
 def train_and_generate(real_data, metadata, num_rows_to_generate, models_config):
-    """
-    训练模型，生成合成数据，并追踪碳排放。
-    Train models, generate synthetic data, and track carbon emissions.
-    """
     os.makedirs(PathConfig.SYNTH_DIR, exist_ok=True)
     os.makedirs(PathConfig.EMISSIONS_DIR, exist_ok=True)
     os.makedirs(PathConfig.MODELS_DIR, exist_ok=True)
 
     sustainability_report = {}
-
-    logging.info("Starting model training and generation process...")
 
     for name, cfg in models_config.items():
         logging.info("=" * 80)
@@ -138,173 +125,58 @@ def train_and_generate(real_data, metadata, num_rows_to_generate, models_config)
         model_class = cfg["class"]
         model_params = cfg.get("params", {})
 
-        # 准备训练数据 / Prepare training data
+        # 准备数据
         data_for_model = _prepare_data_for_model(real_data, name)
 
-        tracker = None
-        gpu_included = False
-        coverage_label = "unknown"
+        tracker = _create_emissions_tracker_for_model(name)
+
+        start_time = time.time()
+        if tracker:
+            tracker.start()
 
         try:
-            # 初始化排放追踪器 / Initialize emissions tracker
-            try:
-                tracker = EmissionsTracker(
-                    project_name=f"Synth-{name}",
-                    output_dir=PathConfig.EMISSIONS_DIR,
-                    save_to_file=True,
-                )
-                logging.info(f"[Sustainability/{name}] EmissionsTracker created (CPU+RAM+GPU if available).")
-            except Exception as e:
-                logging.warning(
-                    "[Sustainability/%s] Failed to initialise EmissionsTracker: %s. "
-                    "Sustainability will be marked as N/A for this model.",
-                    name,
-                    e,
-                )
-                tracker = None
-
-            start_time = time.time()
-            if tracker is not None:
-                tracker.start()
-
-            # ---------- 训练 / Training ----------
+            # 训练
             model = model_class(metadata, **model_params)
             model.fit(data_for_model)
 
-            # ---------- 采样 / Sampling ----------
+            # 生成
             synth = model.sample(num_rows_to_generate)
 
-            # ---------- 停止追踪 / Stop Tracking ----------
+            # 停止追踪 (关键修复：只调用一次 stop)
             emissions_kg = None
             energy_kwh = None
-            if tracker is not None:
-                try:
-                    tracker.stop()  # 停止追踪
 
-                    # 直接读取 tracker 的属性，而不是依赖 stop() 的返回值
-                    # CodeCarbon 3.x 中，stop() 可能返回 None 或 float，直接读取属性最安全
-                    if hasattr(tracker, 'final_emissions'):
-                        emissions_kg = float(tracker.final_emissions)
-                    elif hasattr(tracker, '_total_emissions'):
-                        # 兼容旧版本
-                        emissions_kg = float(tracker._total_emissions.emissions)
-
-                    if hasattr(tracker, 'final_energy'):
-                        energy_kwh = float(tracker.final_energy)
-                    elif hasattr(tracker, '_total_energy'):
-                        # 兼容旧版本
-                        energy_kwh = float(tracker._total_energy.energy_consumed)
-
-                    # 如果能读到数据，就标记为 full
-                    if emissions_kg is not None:
-                        gpu_included = True
-                        coverage_label = "full"
-                    else:
-                        coverage_label = "unknown"
-
-                except Exception as e:
-                    logging.warning(
-                        "[Sustainability/%s] Failed to read emissions data from tracker: %s",
-                        name,
-                        e,
-                    )
-                    coverage_label = "partial"
+            if tracker:
+                emissions_kg = tracker.stop()  # stop() 返回的是 emissions
+                # 尝试获取更详细的数据
+                energy_kwh = getattr(tracker, 'final_energy', None)
 
             elapsed = time.time() - start_time
-            logging.info(
-                "[%s] Training done. Time=%.3fs, CO2=%s kgCO2eq, Energy=%s kWh, coverage=%s",
-                name,
-                elapsed,
-                f"{emissions_kg:.6f}" if isinstance(emissions_kg, (int, float)) else "N/A",
-                f"{energy_kwh:.6f}" if isinstance(energy_kwh, (int, float)) else "N/A",
-                coverage_label,
-            )
 
-            # ---------- 保存 / Saving ----------
-            model_path = os.path.join(PathConfig.MODELS_DIR, f"{name.lower()}.pkl")
-            model.save(model_path)
-            logging.info("[%s] Model saved to %s", name, model_path)
-
-            synth_path = os.path.join(PathConfig.SYNTH_DIR, f"synth_{name.lower()}.csv")
-            synth.to_csv(synth_path, index=False)
-            logging.info("[%s] Synthetic data saved to %s", name, synth_path)
-
+            # 记录结果
             sustainability_report[name] = {
                 "training_time_sec": elapsed,
                 "co2_eq_kg": emissions_kg,
                 "energy_kwh": energy_kwh,
-                "gpu_included": gpu_included,
-                "sustainability_coverage": coverage_label,
+                "sustainability_coverage": "full" if emissions_kg is not None else "unknown"
             }
 
-        except MemoryError:
-            # 捕获内存溢出错误 / Catch Out-Of-Memory errors
-            logging.error(
-                "[%s] Training failed due to MemoryError / OOM. "
-                "Consider reducing MAX_TRAIN_ROWS_PER_MODEL or model complexity.",
-                name,
-                exc_info=True,
-            )
-            if tracker is not None:
-                try:
-                    tracker.stop()
-                except Exception:
-                    pass
-
-            sustainability_report[name] = {
-                "training_time_sec": None,
-                "co2_eq_kg": None,
-                "energy_kwh": None,
-                "gpu_included": False,
-                "sustainability_coverage": "N/A_OOM",
-            }
+            # 保存
+            model.save(os.path.join(PathConfig.MODELS_DIR, f"{name.lower()}.pkl"))
+            synth.to_csv(os.path.join(PathConfig.SYNTH_DIR, f"synth_{name.lower()}.csv"), index=False)
 
         except Exception as e:
-            # 捕获其他意外错误 / Catch unexpected errors
-            logging.error("[%s] Training failed with unexpected error: %s", name, e, exc_info=True)
-            if tracker is not None:
+            logging.error(f"[{name}] Failed: {e}", exc_info=True)
+            if tracker:
                 try:
                     tracker.stop()
-                except Exception:
+                except:
                     pass
 
             sustainability_report[name] = {
                 "training_time_sec": None,
                 "co2_eq_kg": None,
-                "energy_kwh": None,
-                "gpu_included": False,
-                "sustainability_coverage": "N/A_ERROR",
+                "sustainability_coverage": "error"
             }
 
-    logging.info("All models processed. Sustainability report ready.")
     return sustainability_report
-
-
-if __name__ == "__main__":
-    # 独立运行模式 / Standalone execution mode
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-    )
-    logging.info("Loading data for model training (Standalone)...")
-    try:
-        data = pd.read_csv(DatasetConfig.PROCESSED_PATH)
-        metadata = SingleTableMetadata.load_from_json(DatasetConfig.METADATA_PATH)
-        num_to_generate = len(data)
-
-        report = train_and_generate(data, metadata, num_rows_to_generate=num_to_generate)
-
-        logging.info("--- Sustainability Report Summary ---")
-        for model, metrics in report.items():
-            logging.info(
-                f"{model}: "
-                f"Time={metrics['training_time_sec']:.2f}s, "
-                f"CO2={metrics['co2_eq_kg'] if metrics['co2_eq_kg'] is not None else 'N/A'} kg, "
-                f"Energy={metrics['energy_kwh'] if metrics['energy_kwh'] is not None else 'N/A'} kWh, "
-                f"Coverage={metrics['sustainability_coverage']}"
-            )
-
-    except FileNotFoundError:
-        logging.error("Processed data or metadata not found. Please run data_loader.py first.")
-    except Exception as e:
-        logging.error(f"Standalone model training failed: {e}")

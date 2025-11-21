@@ -1,249 +1,166 @@
-# SynTab-GRC: A Multi-Dimensional Governance Scorecard for Synthetic Tabular Data
+# SynTab-GRC: A Multi-Dimensional Evaluation Framework for Synthetic Tabular Data
 
-The project implements an end-to-end evaluation pipeline for synthetic **tabular** data generators (e.g. GaussianCopula, CTGAN, TVAE).  
-It translates technical metrics into a **GRC-oriented scorecard** that can be read by non-technical governance, risk and compliance (GRC) stakeholders.
+**SynTab-GRC** is a comprehensive evaluation system designed to bridge the "operational impasse" between data science innovation and governance oversight. 
 
----
+This framework benchmarks synthetic data generators (Statistical, GAN-based, and VAE-based) across five responsible AI dimensions: **Fidelity, Utility, Privacy, Fairness, and Sustainability**. It features a novel **GRC Scorecard** mechanism that translates complex technical metrics into actionable, audit-ready risk signals (Red/Amber/Green).
 
-## 1. Overview
-
-The toolkit provides:
-
-1. **Data ingestion & preparation**  
-   - Load a configured raw CSV dataset.  
-   - Apply lightweight cleaning and column dropping.  
-   - Automatically infer SDV `SingleTableMetadata`.
-
-2. **Synthetic data generation with sustainability tracking**  
-   - Train multiple SDV single-table synthesizers (GaussianCopula, CTGAN, TVAE).  
-   - Generate synthetic datasets with 1:1 row counts.  
-   - Track **CO₂ emissions and energy consumption** using `codecarbon`.
-
-3. **Multi-dimensional quantitative evaluation**  
-   - **Fidelity / Quality**: distributional similarity and correlation structure (JSD-based scores, NMI) using `sdmetrics`.  
-   - **Utility**: Train-on-Synthetic, Test-on-Real (TSTR) downstream ML performance (F1, AUC) using `scikit-learn`.  
-   - **Privacy risk**: membership-inference-style risk proxy (MIA AUC) from `sdmetrics`.
-   - **Fairness**: demographic parity and equalized odds differences across sensitive attributes using `fairlearn`.
-   - **Sustainability**: CO₂ emissions (kg CO₂eq) and training time (seconds) from `codecarbon`.
-
-4. **GRC translation & reporting**
-   - Map raw metrics to **RAG (Red / Amber / Green)** ratings using configurable thresholds.
-   - Aggregate results into a **GRC scorecard DataFrame**.
-   - Export as:
-     - `results/metrics_report.json` – raw metrics for each model.
-     - `results/grc_scorecard.csv` – tabular scorecard.
-     - `results/grc_scorecard.png` – publication-quality scorecard figure.
-
-The entire experiment is orchestrated through a single entry point (`main.py`) and a single configuration file (`src/config.py`).
+> **Context:** This repository contains the implementation code for the Master's Thesis: *"Responsible AI in Practice: A Multi-Dimensional Evaluation Framework for Synthetic Tabular Data."*
 
 ---
 
-## 2. Repository layout
+## 🚀 Key Features
 
-Expected project structure (after unpacking this project):
+### 1. Multi-Dimensional Benchmarking
+Beyond the traditional Fidelity-Utility-Privacy (FUP) trilemma, this framework integrates:
+* **Algorithmic Fairness:** Measures bias propagation using *Statistical Parity Difference (SPD)*.
+* **Computational Sustainability:** Tracks CO₂ emissions and energy consumption via *CodeCarbon*, implementing a tiered tracking logic (GPU priority with CPU fallback).
 
-```text
-thesis_project/
+### 2. Resource-Aware & Robust Execution
+* **Dynamic Stratified Sampling:** Automatically detects hardware constraints (RAM/GPU) and downsamples large datasets to a manageable size (e.g., 50k rows) while strictly preserving class distributions.
+* **OOM Protection:** Prevents training crashes on standard hardware when using heavy deep learning models (CTGAN, TVAE).
+
+### 3. Handling Mode Collapse (Imbalanced Data Support)
+* **Hybrid Resampling Strategy:** Implements a conditional upsampling mechanism in the training pipeline. This mitigates "mode collapse" in highly imbalanced datasets (e.g., Financial Fraud), ensuring that generative models capture minority class signals to preserve downstream Utility (F1-Score) and Fairness metrics.
+
+### 4. Governance-Oriented Visualization
+* **Automated Scorecard:** Converts raw floating-point metrics into categorical risk levels based on configurable, context-aware thresholds (defined in `config.py`).
+
+---
+
+## 📂 Repository Structure
+
+```bash
+SynTab-GRC/
 ├── data/
-│   ├── raw/
-│   │   └── adult.csv              # Example dataset (not distributed in this repo)
-│   └── processed/                 # Auto-generated cleaned dataset(s)
-├── metadata/                      # Auto-generated SDV metadata JSONs
-├── models/                        # Saved synthesizer objects (optional)
+│   ├── raw/                 # Place original CSV files here (e.g., application_train.csv)
+│   └── processed/           # Cleaned and sampled data (auto-generated)
+├── metadata/                # SDV metadata JSON files (auto-generated)
+├── models/                  # Saved generator models (.pkl)
 ├── results/
-│   ├── synthetic_data/            # Generated synthetic tables
-│   ├── emissions/                 # CodeCarbon emission CSV files
-│   ├── metrics_report.json        # Raw metric dictionary (per model)
-│   ├── grc_scorecard.csv          # Final GRC scorecard (tabular)
-│   └── grc_scorecard.png          # Final GRC scorecard (figure)
+│   ├── emissions/           # Carbon footprint logs (CodeCarbon)
+│   ├── synthetic_data/      # Generated synthetic datasets
+│   ├── metrics_report.json  # Raw calculated metrics
+│   └── grc_scorecard.png    # Final visualized scorecard
 ├── src/
-│   ├── __init__.py
-│   ├── config.py                  # Single control panel for the framework
-│   ├── data_loader.py             # Load & clean raw data, infer metadata
-│   ├── model_trainer.py           # Train SDV models + CodeCarbon tracking
-│   ├── evaluation_engine.py       # Fidelity / Utility / Privacy / Fairness engine
-│   └── grc_translator.py          # GRC mapping + scorecard generation & plotting
-├── main.py                        # Orchestrates the full 5-step pipeline
-├── requirements.txt
+│   ├── config.py            # Central Control Panel (Thresholds, Paths, Models)
+│   ├── data_loader.py       # Resource-aware ingestion & sampling
+│   ├── model_trainer.py     # Training loop with resampling & carbon tracking
+│   ├── evaluation_engine.py # 5-dimensional metric computation
+│   ├── grc_translator.py    # RAG logic application & visualization
+│   └── utils.py             # Helper functions
+├── main.py                  # Pipeline orchestrator (Entry Point)
+├── requirements.txt         # Dependencies
 └── README.md
 ```
-> **Note:** The raw dataset (e.g. `adult.csv` in `data/raw/`) is **not** distributed with this repository due to licensing and size.
-> You must place your own dataset there or update the configuration to point to a different file.
+## 🛠️ Installation & Prerequisites
+
+### Requirements
+* Python >= 3.8
+* CUDA-enabled GPU (Recommended for CTGAN/TVAE training, but works on CPU)
+
+### Setup
+1.  **Clone the repository:**
+    ```bash
+    git clone [https://github.com/YourUsername/SynTab-GRC.git](https://github.com/YourUsername/SynTab-GRC.git)
+    cd SynTab-GRC
+    ```
+
+2.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+    *Key dependencies include: `sdv`, `sdmetrics`, `codecarbon`, `fairlearn`, `scikit-learn`, `pandas`, `pynvml`.*
 
 ---
 
-## 3. Installation
+## ⚙️ Configuration
 
-### 3.1. Python version
+This project uses a **Configuration-Driven Architecture**. You do not need to modify the core logic code to switch datasets or adjust risk policies.
 
-The project was developed and tested with **Python 3.10–3.11**.
+All settings are managed in `src/config.py`:
 
-### 3.2. Create and activate a virtual environment
+1.  **Dataset Selection:**
+    Modify `DatasetConfig` to point to your target CSV.
+    ```python
+    class DatasetConfig:
+        RAW_DATA_FILE = "application_train.csv"  # Target file
+        TARGET_COLUMN = "TARGET"                 # Target variable for prediction
+        POSITIVE_LABEL = 1                       # Minority class label
+        SENSITIVE_FEATURES = ["CODE_GENDER"]     # For fairness assessment
+        SAMPLE_SIZE = 50000                      # Effective training size
+    ```
 
-**Windows (PowerShell):**
+2.  **Risk Thresholds (RAG Logic):**
+    Adjust `RAGThresholdConfig` based on the domain context (e.g., Finance vs. Healthcare).
+    ```python
+    class RAGThresholdConfig:
+        # Adjust thresholds based on task difficulty (e.g., Imbalanced vs Balanced)
+        UTILITY_TSTR_F1 = {"green": 0.40, "amber": 0.20} 
+        PRIVACY_MIA = {"green": 0.55, "amber": 0.65}
+    ```
+
+---
+
+## 🚀 Usage
+
+### Running the Full Pipeline
+To execute the complete workflow (Data Ingestion → Training → Evaluation → Scorecard Generation):
 
 ```bash
-cd thesis_project
-
-python -m venv .venv
-.\.venv\Scripts\activate
-```
-
-**macOS / Linux:**
-
-```bash
-cd thesis_project
-
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 3.3. Install dependencies
-```bash
-pip install -r requirements.txt
-```
-## 4. Quickstart: run the full pipeline
-### 1. Place a raw CSV dataset
-Copy your tabular dataset into data/raw/, for example:
-
-````
-data/raw/adult.csv
-````
-
-### 2. Update configuration in src/config.py
-In DatasetConfig, set at least:
-````python
-class DatasetConfig:
-    RAW_DATA_FILE = "adult.csv"      # file name in data/raw/
-    TARGET_COLUMN = "income"         # label column used for TSTR & fairness
-    POSITIVE_LABEL = ">50K"          # the "positive" class for F1
-    SENSITIVE_FEATURES = ["sex", "race"]  # protected attributes for fairness
-    COLS_TO_DROP = ["fnlwgt", "education"]  # IDs / weights / redundant cols
-````
-If you use a different dataset, adjust these fields accordingly.
-
-### 3. Run the pipeline
-From the project root (with the virtual environment activated):
-````bash
 python main.py
-````
-   The script will execute the following steps:
-
-   1. Ingest & preprocess the raw dataset (`data_loader.py`).  
-   2. Train synthetic data generators & track sustainability (`model_trainer.py`).  
-   3. Evaluate quality, utility, privacy, and fairness (`evaluation_engine.py`).  
-   4. Translate metrics into a GRC scorecard (`grc_translator.py`).  
-   5. Export the scorecard as CSV and PNG.
-
-4. **Inspect outputs**
-
-   - Check the logs in the console.  
-   - Key artefacts are saved under `results/`:
-     - `metrics_report.json`  
-     - `grc_scorecard.csv`  
-     - `grc_scorecard.png`
+```
+### Workflow Details
+1.  **Ingestion:** The system loads the raw data, checks system resources, and applies stratified sampling if necessary (`data_loader.py`).
+2.  **Training:** Three models (GaussianCopula, CTGAN, TVAE) are trained. If class imbalance is detected, the system applies **stratified upsampling** to prevent mode collapse (`model_trainer.py`).
+3.  **Evaluation:** Synthetic data is evaluated against real data using JSD, NMI, TSTR (F1), MIA (AUC), and SPD (`evaluation_engine.py`).
+4.  **Reporting:** Results are aggregated, mapped to RAG colors, and exported as a PNG image (`grc_translator.py`).
 
 ---
 
-## 5. Configuration details (`src/config.py`)
+## 📊 Methodology & Metrics
 
-`src/config.py` is the **single control panel** for the framework.
+### 1. Generative Models Benchmarked
+* **Gaussian Copula:** Statistical baseline (Multivariate covariance).
+* **CTGAN:** Conditional Generative Adversarial Network (Deep Learning).
+* **TVAE:** Tabular Variational Autoencoder (Deep Learning).
 
-### 5.1. Paths – `PathConfig`
+### 2. Evaluation Dimensions
+| Dimension | Metric | Description |
+| :--- | :--- | :--- |
+| **Quality** | JSD & NMI | Measures marginal distribution (Shape) and correlation (Structure) retention. |
+| **Utility** | TSTR F1 | *Train-Synthetic-Test-Real*. Evaluates if synthetic data retains predictive signals. |
+| **Privacy** | Adversarial AUC | Measures how easily a discriminator can distinguish synthetic from real records. |
+| **Fairness** | SPD | *Statistical Parity Difference*. Checks if algorithmic bias is amplified. |
+| **Sustainability** | CO₂eq (kg) | Environmental cost of training, tracked via CodeCarbon. |
 
-```python
-class PathConfig:
-    DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-    RAW_DIR = os.path.join(DATA_DIR, "raw")
-    PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
-    METADATA_DIR = os.path.join(PROJECT_ROOT, "metadata")
-    MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-    RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
+### 3. Note on Resampling
+For highly imbalanced datasets (e.g., Home Credit Default Risk), this framework employs a **Fidelity-Utility Trade-off Mechanism**. It minimally upsamples the minority class during training to ensure the model learns risk signals (Utility), acknowledging a controlled trade-off in statistical distribution fidelity.
 
-    SYNTH_DIR = os.path.join(RESULTS_DIR, "synthetic_data")
-    EMISSIONS_DIR = os.path.join(RESULTS_DIR, "emissions")
+---
 
-    METRICS_REPORT_PATH = os.path.join(RESULTS_DIR, "metrics_report.json")
-    GRC_SCORECARD_CSV_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.csv")
-    GRC_SCORECARD_IMG_PATH = os.path.join(RESULTS_DIR, "grc_scorecard.png")
-```
-Usually you can keep these defaults.
+## 📄 Outputs
 
-### 5.2. Dataset – `DatasetConfig`
+After execution, check the `results/` folder:
+* **`grc_scorecard.png`**: The visual artifact summarizing model performance for stakeholders.
+* **`metrics_report.json`**: Full technical logs containing raw float values.
+* **`emissions/`**: CSV logs detailed energy consumption (RAM, CPU, GPU).
 
-Key fields to adapt when switching datasets:
+---
 
-```python
-class DatasetConfig:
-    RAW_DATA_FILE = "adult.csv"
-    TARGET_COLUMN = "income"
-    POSITIVE_LABEL = ">50K"
-    SENSITIVE_FEATURES = ["sex", "race"]
-    COLS_TO_DROP = ["fnlwgt", "education"]
+## 📜 License
 
-    RAW_PATH = os.path.join(PathConfig.RAW_DIR, RAW_DATA_FILE)
-    CLEAN_FILE = RAW_DATA_FILE.replace(".csv", "_clean.csv")
-    PROCESSED_PATH = os.path.join(PathConfig.PROCESSED_DIR, CLEAN_FILE)
-    META_FILE = RAW_DATA_FILE.replace(".csv", "_metadata.json")
-    METADATA_PATH = os.path.join(PathConfig.METADATA_DIR, META_FILE)
-```
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-When switching to a new dataset:
+---
 
-1. Place `my_dataset.csv` in `data/raw/`.  
-2. Set `RAW_DATA_FILE = "my_dataset.csv"`.  
-3. Update `TARGET_COLUMN`, `POSITIVE_LABEL`, `SENSITIVE_FEATURES`, and `COLS_TO_DROP`.
+## 🖊️ Citation
 
-### 5.3. Models – `MODELS_CONFIG`
+If you use this framework in your research, please cite:
 
-```python
-MODELS_CONFIG = {
-    "GaussianCopula": {
-        "class": GaussianCopulaSynthesizer,
-        "params": {}
-    },
-    "CTGAN": {
-        "class": CTGANSynthesizer,
-        "params": {"epochs": 5}
-    },
-    "TVAE": {
-        "class": TVAESynthesizer,
-        "params": {"epochs": 5}
-    }
+```bibtex
+@mastersthesis{SynTabGRC2025,
+  author = {Liu Kun},
+  title = {Responsible AI in Practice: A Multi-Dimensional Evaluation Framework for Synthetic Tabular Data},
+  school = {UCSI University},
+  year = {2025}
 }
-```
-
-You can increase `epochs` for more realistic experiments or remove/add models as needed.
-
----
-
-## 6. Outputs
-
-After a successful run, the main artefacts are:
-
-- **`results/metrics_report.json`** – nested dictionary with all quantitative metrics per model.  
-- **`results/grc_scorecard.csv`** – tabular GRC scorecard.  
-- **`results/grc_scorecard.png`** – publication-quality figure for the thesis and GRC reports.  
-- **`results/emissions/*.csv`** – detailed emission logs from `codecarbon`.
-
----
-
-## 7. Reproducing the thesis experiments
-
-To reproduce the experiments reported in the thesis:
-
-1. Obtain the original datasets (e.g. UCI Adult).  
-2. Place them in `data/raw/` with the expected file names.  
-3. Ensure `DatasetConfig` matches the column names and labels.  
-4. Run `python main.py`.  
-5. Archive the resulting `results/` directory.
-
----
-
-## 8. License & citation
-
-The code is provided for academic and research purposes.
-
-If you use this repository, please cite the MSc thesis:
-
-> *Liu Kun*, **"Responsible AI in Practice: A Multi-Dimensional Evaluation Framework for Synthetic Tabular Data"**

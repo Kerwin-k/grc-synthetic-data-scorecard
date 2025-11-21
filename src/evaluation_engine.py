@@ -142,13 +142,15 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         )
 
         # 2) 准备目标变量和特征 / Prepare Target & Features
+        # 使用 str() 强制转换以避免 int/str 类型不匹配导致无法识别正类
+        # Use str() casting to prevent int/str mismatches
         y_real_test = real_test[DatasetConfig.TARGET_COLUMN].apply(
-            lambda value: 1 if value == DatasetConfig.POSITIVE_LABEL else 0
+            lambda value: 1 if str(value) == str(DatasetConfig.POSITIVE_LABEL) else 0
         )
         X_real_test = real_test.drop(columns=[DatasetConfig.TARGET_COLUMN])
 
         y_synth_train = synth_data[DatasetConfig.TARGET_COLUMN].apply(
-            lambda value: 1 if value == DatasetConfig.POSITIVE_LABEL else 0
+            lambda value: 1 if str(value) == str(DatasetConfig.POSITIVE_LABEL) else 0
         )
         X_synth_train = synth_data.drop(columns=[DatasetConfig.TARGET_COLUMN])
 

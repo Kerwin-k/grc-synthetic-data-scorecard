@@ -51,18 +51,28 @@ class SustainabilityConfig:
 class DatasetConfig:
     # 原始文件名 (位于 data/raw/) / Raw filename (in data/raw/)
     RAW_DATA_FILE = "adult.csv"
+    # Home_Credit Dataset
+    # RAW_DATA_FILE = "application_train.csv"
 
     # 目标列 (用于 ML 效用和公平性) / Target column (for ML Utility & Fairness)
     TARGET_COLUMN = "income"
+    # Home_Credit Dataset
+    # TARGET_COLUMN = "TARGET"
 
     # 正类标签 (用于 F1 分数) / Positive label (for F1 score)
     POSITIVE_LABEL = ">50K"
+    # Home_Credit Dataset
+    # POSITIVE_LABEL = "1"
 
     # 敏感属性 (用于公平性评估) / Sensitive attributes (for Fairness evaluation)
     SENSITIVE_FEATURES = ["sex", "race"]
+    # Home_Credit Dataset
+    # SENSITIVE_FEATURES = ["CODE_GENDER", "DAYS_BIRTH"]
 
     # 需要丢弃的列 (ID, 权重等) / Columns to drop (IDs, weights, etc.)
     COLS_TO_DROP = ["fnlwgt", "education"]
+    # Home_Credit Dataset
+    # COLS_TO_DROP = ["SK_ID_CURR"]
 
     # 采样大小 (防止内存溢出) / Sample size (to prevent OOM)
     # None = 使用全部数据 / None = use full data
@@ -108,17 +118,23 @@ class RAGThresholdConfig:
     QUALITY_JSD = {"green": 0.90, "amber": 0.80}
     QUALITY_NMI = {"green": 0.80, "amber": 0.60}
 
-    # 2) 效用 (越高越好) / Utility (Higher is better)
+    # 2) 效用 (越高越好)(需根据实际 XGBoost 基线调整)  / Utility (Higher is better)
     UTILITY_TSTR_F1 = {"green": 0.76, "amber": 0.70}
+    #UTILITY_TSTR_F1 = {"green": 0.40, "amber": 0.20}  # Home_Credit Dataset
 
     # 3) 风险 (越低越好) / Risk (Lower is better)
     PRIVACY_MIA = {"green": 0.55, "amber": 0.65} # MIA AUC
     FAIRNESS = {"green": 0.10, "amber": 0.20}   # Avg Difference
+    # Home_Credit Dataset
+    # PRIVACY_MIA = {"green": 0.55, "amber": 0.65}
+    # FAIRNESS = {"green": 0.10, "amber": 0.20}
 
     # 4) 可持续性 (越低越好) / Sustainability (Lower is better)
     SUSTAIN_CO2 = {"green": 0.005, "amber": 0.05} # kg CO2
     SUSTAIN_CO2_NEAR_ZERO = 1e-3  # 忽略极小排放的阈值 / Threshold to ignore negligible emissions
+
     SUSTAIN_TIME = {"green": 60.0, "amber": 300.0} # Seconds
+    # SUSTAIN_TIME = {"green": 60.0, "amber": 600.0}  # Seconds
 
 # --- 模型配置 (Model Configuration) ---
 MODELS_CONFIG = {
