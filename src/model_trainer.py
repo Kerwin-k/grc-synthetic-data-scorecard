@@ -179,11 +179,29 @@ def train_and_generate(real_data, metadata, num_rows_to_generate, models_config)
             energy_kwh = None
             if tracker is not None:
                 try:
-                    emissions_data = tracker.stop()
-                    emissions_kg = float(getattr(emissions_data, "emissions", None))
-                    energy_kwh = float(getattr(emissions_data, "energy_consumed", None))
-                    gpu_included = True  # 假设 NVML 正常工作 / Assuming NVML is working
-                    coverage_label = "full" if emissions_kg is not None else "unknown"
+                    tracker.stop()  # 停止追踪
+
+                    # 直接读取 tracker 的属性，而不是依赖 stop() 的返回值
+                    # CodeCarbon 3.x 中，stop() 可能返回 None 或 float，直接读取属性最安全
+                    if hasattr(tracker, 'final_emissions'):
+                        emissions_kg = float(tracker.final_emissions)
+                    elif hasattr(tracker, '_total_emissions'):
+                        # 兼容旧版本
+                        emissions_kg = float(tracker._total_emissions.emissions)
+
+                    if hasattr(tracker, 'final_energy'):
+                        energy_kwh = float(tracker.final_energy)
+                    elif hasattr(tracker, '_total_energy'):
+                        # 兼容旧版本
+                        energy_kwh = float(tracker._total_energy.energy_consumed)
+
+                    # 如果能读到数据，就标记为 full
+                    if emissions_kg is not None:
+                        gpu_included = True
+                        coverage_label = "full"
+                    else:
+                        coverage_label = "unknown"
+
                 except Exception as e:
                     logging.warning(
                         "[Sustainability/%s] Failed to read emissions data from tracker: %s",
