@@ -54,18 +54,21 @@ def load_and_clean_data() -> pd.DataFrame:
     sample_size: Optional[int] = None
 
     if mode == "full":
-        logging.info(
-            "[DataLoader] SAMPLING_MODE='full' -> using all %d rows without central down-sampling.",
-            len(df),
-        )
+        logging.info("...")  # 保留原逻辑
         sample_size = None
+    elif mode == "auto":
+        # 新增: 自动模式调用动态检测
+        sample_size = DatasetConfig.get_dynamic_sample_size()
+        logging.info(
+            "[DataLoader] SAMPLING_MODE='auto' -> Resource-Aware System detected safe sample size: %d",
+            sample_size
+        )
     else:
+        # 默认: Fixed fixed mode (论文使用模式)
         sample_size = DatasetConfig.SAMPLE_SIZE
         logging.info(
-            "[DataLoader] SAMPLING_MODE='%s', SAMPLE_SIZE=%s "
-            "(rows > SAMPLE_SIZE will be down-sampled).",
-            mode,
-            str(sample_size),
+            "[DataLoader] SAMPLING_MODE='fixed' -> Using strict cap: %d rows for reproducibility.",
+            sample_size
         )
 
     if sample_size is not None and len(df) > sample_size:

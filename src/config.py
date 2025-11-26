@@ -12,6 +12,10 @@
 
 import os
 import numpy as np
+try:
+    import psutil
+except ImportError:
+    psutil = None
 from sdv.single_table import (
     GaussianCopulaSynthesizer,
     CTGANSynthesizer,
@@ -87,6 +91,28 @@ class DatasetConfig:
     # 采样模式 / Sampling Mode: 'fixed' (下采样), 'full' (全量), 'auto'
     SAMPLING_MODE: str = "fixed"
 
+    @staticmethod
+    def get_dynamic_sample_size():
+        """
+        Implements Resource-Aware Heuristic Assessment.
+        Returns a safe sample size based on available RAM.
+        """
+        if psutil is None:
+            return 50_000  # Fallback if psutil not installed
+
+        try:
+            mem = psutil.virtual_memory()
+            available_gb = mem.available / (1024 ** 3)
+
+            if available_gb > 16:
+                return 100_000
+            elif available_gb > 8:
+                return 50_000
+            else:
+                return 20_000
+        except Exception:
+            return 50_000
+
     # 自动路径 (勿改) / Auto-generated paths (Do not edit)
     RAW_PATH = os.path.join(PathConfig.RAW_DIR, RAW_DATA_FILE)
     CLEAN_FILE = RAW_DATA_FILE.replace(".csv", "_clean.csv")
@@ -133,8 +159,8 @@ class RAGThresholdConfig:
     SUSTAIN_CO2 = {"green": 0.005, "amber": 0.05} # kg CO2
     SUSTAIN_CO2_NEAR_ZERO = 1e-3  # 忽略极小排放的阈值 / Threshold to ignore negligible emissions
 
-    SUSTAIN_TIME = {"green": 60.0, "amber": 300.0} # Seconds
-    # SUSTAIN_TIME = {"green": 60.0, "amber": 600.0}  # Seconds
+    # SUSTAIN_TIME = {"green": 60.0, "amber": 300.0} # Seconds
+    SUSTAIN_TIME = {"green": 60.0, "amber": 600.0}  # Seconds
 
 # --- 模型配置 (Model Configuration) ---
 MODELS_CONFIG = {

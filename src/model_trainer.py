@@ -74,31 +74,34 @@ def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFr
             min_count = counts[minority_class]
             maj_count = counts[majority_class]
 
-            # 如果比例小于 30%，则进行平衡处理
-            if min_count / maj_count < 0.3:
-                logging.info(f"[{model_name}] Balancing classes (Minority ratio: {min_count / maj_count:.2%})...")
+            ratio = min_count / maj_count
+
+            # 阈值设为 0.3
+            if ratio < 0.3:
+                logging.info(f"[{model_name}] Triggering Hybrid Resampling (Ratio: {ratio:.2%})...")
 
                 df_minority = df[df[target_col] == minority_class]
                 df_majority = df[df[target_col] == majority_class]
 
-                # 策略：多数类下采样，少数类过采样，使两者数量相等
-                # 目标数量 = 当前总行数的一半 (确保总数不超过 max_rows)
-                target_count_per_class = len(df) // 2
+                # 混合策略 (Hybrid Strategy)
+                # 1. 保持多数类数据尽可能多 (Minimal Invasive)，只在超过 MAX_TRAIN_ROWS 时才会被 Step 1 截断
+                # 2. 上采样少数类，使其达到多数类的一定比例 (例如 50%)，以恢复信号
 
-                # 1. 多数类下采样
-                df_maj_down = resample(df_majority,
-                                       replace=False,
-                                       n_samples=target_count_per_class,
-                                       random_state=42)
+                # 目标: 让少数类达到多数类的 50% (或者你认为合适的平衡点，0.5 是比较稳健的)
+                target_min_count = int(len(df_majority) * 0.5)
 
-                # 2. 少数类过采样
-                df_min_up = resample(df_minority,
-                                     replace=True,
-                                     n_samples=target_count_per_class,
-                                     random_state=42)
+                # 如果原始少数类太少，就过采样；如果已经够多(只是比例低)，保持原样
+                if len(df_minority) < target_min_count:
+                    df_min_up = resample(df_minority,
+                                         replace=True,
+                                         n_samples=target_min_count,
+                                         random_state=42)
+                else:
+                    df_min_up = df_minority
 
-                df = pd.concat([df_maj_down, df_min_up])
-                logging.info(f"[{model_name}] Balanced. New shape: {df.shape} (50/50 split)")
+                # 合并
+                df = pd.concat([df_majority, df_min_up])
+                logging.info(f"[{model_name}] Hybrid Resampling Complete. New shape: {df.shape}")
 
     # --- 步骤 3: 精度压缩 (Downcasting) ---
     if ResourceConfig.ENABLE_DTYPE_DOWNCAST:

@@ -31,13 +31,6 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\results\emissions\emissions.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
         <entry key="\results\grc_scorecard.csv">
           <value>
             <Attribute>
