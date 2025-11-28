@@ -4,7 +4,7 @@ import logging
 import numpy as np
 import pandas as pd
 from sdv.metadata import SingleTableMetadata
-from codecarbon import EmissionsTracker
+from codecarbon import EmissionsTracker, OfflineEmissionsTracker
 from sklearn.utils import resample
 
 # 导入配置
@@ -19,10 +19,6 @@ from sdv.single_table import (
 
 
 def _create_emissions_tracker_for_model(model_name: str):
-    """
-    创建一个 EmissionsTracker 并尝试检测 GPU。
-    """
-    # 简化的追踪器初始化逻辑
     tracker_kwargs = {
         "project_name": f"thesis-sdg-{model_name}",
         "output_dir": PathConfig.EMISSIONS_DIR,
@@ -30,12 +26,18 @@ def _create_emissions_tracker_for_model(model_name: str):
         "save_to_file": True,
     }
 
-    if SustainabilityConfig.FIXED_COUNTRY_ISO:
-        tracker_kwargs["country_iso_code"] = SustainabilityConfig.FIXED_COUNTRY_ISO
-
     try:
-        tracker = EmissionsTracker(**tracker_kwargs)
+        # 修改逻辑：根据是否有国家代码选择不同的类
+        if SustainabilityConfig.FIXED_COUNTRY_ISO:
+            tracker_kwargs["country_iso_code"] = SustainabilityConfig.FIXED_COUNTRY_ISO
+            # 必须用 Offline 类来接收 country_iso_code
+            tracker = OfflineEmissionsTracker(**tracker_kwargs)
+        else:
+            # 在线检测模式，不要传 country_iso_code
+            tracker = EmissionsTracker(**tracker_kwargs)
+
         return tracker
+
     except Exception as e:
         logging.warning(f"[Sustainability] Failed to init tracker: {e}")
         return None

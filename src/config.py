@@ -55,40 +55,40 @@ class SustainabilityConfig:
 class DatasetConfig:
     # 原始文件名 (位于 data/raw/) / Raw filename (in data/raw/)
     ID_COLUMN = None
-    RAW_DATA_FILE = "adult.csv"
+    # RAW_DATA_FILE = "adult.csv"
     # Home_Credit Dataset
-    # RAW_DATA_FILE = "application_train.csv"
+    RAW_DATA_FILE = "application_train.csv"
 
     # 目标列 (用于 ML 效用和公平性) / Target column (for ML Utility & Fairness)
-    TARGET_COLUMN = "income"
+    # TARGET_COLUMN = "income"
     # Home_Credit Dataset
-    # TARGET_COLUMN = "TARGET"
+    TARGET_COLUMN = "TARGET"
 
     # 正类标签 (用于 F1 分数) / Positive label (for F1 score)
-    POSITIVE_LABEL = ">50K"
+    # POSITIVE_LABEL = ">50K"
     # Home_Credit Dataset
-    # POSITIVE_LABEL = "1"
+    POSITIVE_LABEL = "1"
 
     # 敏感属性 (用于公平性评估) / Sensitive attributes (for Fairness evaluation)
-    SENSITIVE_FEATURES = ["sex", "race"]
+    # SENSITIVE_FEATURES = ["sex", "race"]
     # Home_Credit Dataset
-    # SENSITIVE_FEATURES = ["CODE_GENDER", "DAYS_BIRTH"]
+    SENSITIVE_FEATURES = ["CODE_GENDER", "DAYS_BIRTH"]
 
     # 需要丢弃的列 (ID, 权重等) / Columns to drop (IDs, weights, etc.)
-    COLS_TO_DROP = ["fnlwgt", "education"]
+    # COLS_TO_DROP = ["fnlwgt", "education"]
     # Home_Credit Dataset
-    # COLS_TO_DROP = [
-    #     "SK_ID_CURR",  # ID列，必须删
-    #     "ORGANIZATION_TYPE",  # 有58类，转换One-Hot后不仅消耗巨大内存，还会拖慢训练
-    #     "OCCUPATION_TYPE",  # 类别多
-    #     "FONDKAPREMONT_MODE",  # 房屋信息，缺失值多且复杂
-    #     "HOUSETYPE_MODE",
-    #     "WALLSMATERIAL_MODE",
-    #     "EMERGENCYSTATE_MODE",
-    #     "WEEKDAY_APPR_PROCESS_START",  # 对信贷预测贡献低，但类别多
-    #     "HOUR_APPR_PROCESS_START",
-    #     "OWN_CAR_AGE"  # 缺失值极多
-    # ]
+    COLS_TO_DROP = [
+        "SK_ID_CURR",  # ID列，必须删
+        "ORGANIZATION_TYPE",  # 有58类，转换One-Hot后不仅消耗巨大内存，还会拖慢训练
+        "OCCUPATION_TYPE",  # 类别多
+        "FONDKAPREMONT_MODE",  # 房屋信息，缺失值多且复杂
+        "HOUSETYPE_MODE",
+        "WALLSMATERIAL_MODE",
+        "EMERGENCYSTATE_MODE",
+        "WEEKDAY_APPR_PROCESS_START",  # 对信贷预测贡献低，但类别多
+        "HOUR_APPR_PROCESS_START",
+        "OWN_CAR_AGE"  # 缺失值极多
+    ]
 
     # 采样大小 (防止内存溢出) / Sample size (to prevent OOM)
     # None = 使用全部数据 / None = use full data
@@ -157,15 +157,15 @@ class RAGThresholdConfig:
     QUALITY_NMI = {"green": 0.80, "amber": 0.60}
 
     # 2) 效用 (越高越好)(需根据实际 XGBoost 基线调整)  / Utility (Higher is better)
-    UTILITY_TSTR_F1 = {"green": 0.76, "amber": 0.70}
-    #UTILITY_TSTR_F1 = {"green": 0.40, "amber": 0.20}  # Home_Credit Dataset
+    # UTILITY_TSTR_F1 = {"green": 0.76, "amber": 0.70}
+    UTILITY_TSTR_F1 = {"green": 0.40, "amber": 0.20}  # Home_Credit Dataset
 
     # 3) 风险 (越低越好) / Risk (Lower is better)
-    PRIVACY_MIA = {"green": 0.55, "amber": 0.65} # MIA AUC
-    FAIRNESS = {"green": 0.10, "amber": 0.20}   # Avg Difference
+    # PRIVACY_MIA = {"green": 0.55, "amber": 0.65} # MIA AUC
+    # FAIRNESS = {"green": 0.10, "amber": 0.20}   # Avg Difference
     # Home_Credit Dataset
-    # PRIVACY_MIA = {"green": 0.55, "amber": 0.65}
-    # FAIRNESS = {"green": 0.10, "amber": 0.20}
+    PRIVACY_MIA = {"green": 0.55, "amber": 0.65}
+    FAIRNESS = {"green": 0.10, "amber": 0.20}
 
     # 4) 可持续性 (越低越好) / Sustainability (Lower is better)
     SUSTAIN_CO2 = {"green": 0.005, "amber": 0.05} # kg CO2
@@ -182,11 +182,11 @@ MODELS_CONFIG = {
     },
     "CTGAN": {
         "class": CTGANSynthesizer,
-        "params": {"epochs": 5,"verbose": True}
+        "params": {"epochs": 100,"verbose": True}
     },
     "TVAE": {
         "class": TVAESynthesizer,
-        "params": {"epochs": 5,"verbose": True}
+        "params": {"epochs": 100,"verbose": True}
     }
 }
 
