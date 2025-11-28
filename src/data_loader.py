@@ -38,87 +38,65 @@ def load_and_clean_data() -> pd.DataFrame:
     4. 基础清洗 / Basic Cleaning:
        - 去除空白字符 / Strip whitespace
        - 统一缺失值标记 / Unify missing value markers
-       - 尝试转换为数值 / Attempt numeric conversion
-    5. 降精度 (float64 -> float32) 以节省内存 / Downcast float64 to float32
-    6. 保存处理后的数据 / Save processed data
+    5. 降精度 / Downcasting (float64 -> float32)
+    6. 保存到 PROCESSED_DIR / Save to PROCESSED_DIR
     """
-    raw_path = os.path.join(PathConfig.RAW_DIR, DatasetConfig.RAW_DATA_FILE)
-    logging.info(f"[DataLoader] Loading raw dataset from {raw_path}")
+    raw_path = DatasetConfig.RAW_PATH
+    if not os.path.exists(raw_path):
+        raise FileNotFoundError(f"Raw data not found at {raw_path}")
 
+    logger.info(f"[DataLoader] Loading raw data from {raw_path}...")
+
+    # 读取原始数据
     df = pd.read_csv(raw_path)
 
     # ----------------------------
-    # 1) 中心化采样 / Centralized Sampling
+    # 2) 中心化采样 / Centralized Sampling
     # ----------------------------
-    mode = getattr(DatasetConfig, "SAMPLING_MODE", "fixed")
-    sample_size: Optional[int] = None
+    # 如果配置为固定大小采样，且数据量超过阈值
+    if DatasetConfig.SAMPLING_MODE == "fixed" and len(df) > DatasetConfig.SAMPLE_SIZE:
+        target_col = getattr(DatasetConfig, "TARGET_COLUMN", None)
 
-    if mode == "full":
-        logging.info("...")  # 保留原逻辑
-        sample_size = None
-    elif mode == "auto":
-        # 新增: 自动模式调用动态检测
-        sample_size = DatasetConfig.get_dynamic_sample_size()
-        logging.info(
-            "[DataLoader] SAMPLING_MODE='auto' -> Resource-Aware System detected safe sample size: %d",
-            sample_size
-        )
-    else:
-        # 默认: Fixed fixed mode (论文使用模式)
-        sample_size = DatasetConfig.SAMPLE_SIZE
-        logging.info(
-            "[DataLoader] SAMPLING_MODE='fixed' -> Using strict cap: %d rows for reproducibility.",
-            sample_size
-        )
-
-    if sample_size is not None and len(df) > sample_size:
-        logging.info(
-            f"[DataLoader] Dataset has {len(df)} rows; "
-            f"downsampling to {sample_size} rows "
-            f"(stratify={getattr(DatasetConfig, 'STRATIFY_BY_TARGET', False)})."
-        )
-        if getattr(DatasetConfig, "STRATIFY_BY_TARGET", False) and DatasetConfig.TARGET_COLUMN in df.columns:
-            splitter = StratifiedShuffleSplit(
-                n_splits=1,
-                test_size=sample_size,
-                random_state=getattr(DatasetConfig, "RANDOM_STATE", 42),
-            )
-            y = df[DatasetConfig.TARGET_COLUMN]
-            _, sample_idx = next(splitter.split(df, y))
-            df = df.iloc[sample_idx].reset_index(drop=True)
+        if target_col and target_col in df.columns:
+            # 分层采样
+            logger.info(f"[DataLoader] Stratified sampling to {DatasetConfig.SAMPLE_SIZE} rows...")
+            split = StratifiedShuffleSplit(n_splits=1, train_size=DatasetConfig.SAMPLE_SIZE, random_state=42)
+            for train_index, _ in split.split(df, df[target_col]):
+                df = df.iloc[train_index]
         else:
-            df = df.sample(
-                n=sample_size,
-                random_state=getattr(DatasetConfig, "RANDOM_STATE", 42),
-            ).reset_index(drop=True)
-
-    logging.info("[DataLoader] Shape after central sampling: %s", df.shape)
+            # 随机采样
+            logger.info(f"[DataLoader] Random sampling to {DatasetConfig.SAMPLE_SIZE} rows...")
+            df = df.sample(n=DatasetConfig.SAMPLE_SIZE, random_state=42)
 
     # ----------------------------
-    # 2) 删除指定列 / Drop Columns
+    # 3) 删除列与清洗 / Dropping & Cleaning
     # ----------------------------
-    if getattr(DatasetConfig, "COLS_TO_DROP", None):
-        drop_cols = [c for c in DatasetConfig.COLS_TO_DROP if c in df.columns]
-        if drop_cols:
-            df = df.drop(columns=drop_cols)
-            logging.info("[DataLoader] Dropped columns: %s", drop_cols)
 
-    # ----------------------------
-    # 3) 基础清洗 / Basic Cleaning
-    # ----------------------------
-    obj_cols = df.select_dtypes(include=["object"]).columns
-    for col in obj_cols:
-        df[col] = (
-            df[col]
-            .astype(str)
-            .str.strip()
-            .replace({"": np.nan, "NA": np.nan, "NaN": np.nan})
-        )
+    # 删除配置中指定的列 (COLS_TO_DROP)
+    if hasattr(DatasetConfig, 'COLS_TO_DROP') and DatasetConfig.COLS_TO_DROP:
+        cols_to_drop = [c for c in DatasetConfig.COLS_TO_DROP if c in df.columns]
+        if cols_to_drop:
+            logger.info(f"[DataLoader] Dropping ignored columns: {cols_to_drop}")
+            df = df.drop(columns=cols_to_drop)
+
+    # 1. Basic Cleaning
+    # Remove identifiers if configured
+    if hasattr(DatasetConfig, 'ID_COLUMN') and DatasetConfig.ID_COLUMN in df.columns:
+        logger.info(f"[DataLoader] Removing ID column: {DatasetConfig.ID_COLUMN}")
+        df = df.drop(columns=[DatasetConfig.ID_COLUMN])
+
+    # 统一缺失值
+    # 将常见的缺失值标记替换为 np.nan
+    df = (
+        df.replace(r"^\s*$", np.nan, regex=True)
+        .replace(["", "NA", "NaN", "?", "null"], np.nan)
+    )
 
     # 尝试将对象列转换为数值 / Try converting object columns to numeric
     for col in df.columns:
         if df[col].dtype == "object":
             try_num = pd.to_numeric(df[col], errors="ignore")
+            # 只有当转换后确实变成了数值类型才覆盖
             if pd.api.types.is_numeric_dtype(try_num):
                 df[col] = try_num
 

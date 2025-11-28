@@ -48,12 +48,13 @@ class SustainabilityConfig:
     FIXED_COUNTRY_ISO: 设为 ISO 代码 (如 'MYS', 'CHN') 可固定排放因子，方便复现。
                        Set to ISO code (e.g., 'MYS') for reproducible emissions factors.
     """
-    FIXED_COUNTRY_ISO: str | None = None     # 默认 None 使用自动 IP 定位 / Default None uses auto IP lookup
+    FIXED_COUNTRY_ISO: str | None = 'CAN'     # None 使用自动 IP 定位 / None uses auto IP lookup
     FALLBACK_COUNTRY_LABEL: str = "Canada"    # 日志显示的后备国家 / Fallback country label for logs
 
 # --- 数据集配置 (Dataset Configuration) ---
 class DatasetConfig:
     # 原始文件名 (位于 data/raw/) / Raw filename (in data/raw/)
+    ID_COLUMN = None
     RAW_DATA_FILE = "adult.csv"
     # Home_Credit Dataset
     # RAW_DATA_FILE = "application_train.csv"
@@ -76,7 +77,18 @@ class DatasetConfig:
     # 需要丢弃的列 (ID, 权重等) / Columns to drop (IDs, weights, etc.)
     COLS_TO_DROP = ["fnlwgt", "education"]
     # Home_Credit Dataset
-    # COLS_TO_DROP = ["SK_ID_CURR"]
+    # COLS_TO_DROP = [
+    #     "SK_ID_CURR",  # ID列，必须删
+    #     "ORGANIZATION_TYPE",  # 有58类，转换One-Hot后不仅消耗巨大内存，还会拖慢训练
+    #     "OCCUPATION_TYPE",  # 类别多
+    #     "FONDKAPREMONT_MODE",  # 房屋信息，缺失值多且复杂
+    #     "HOUSETYPE_MODE",
+    #     "WALLSMATERIAL_MODE",
+    #     "EMERGENCYSTATE_MODE",
+    #     "WEEKDAY_APPR_PROCESS_START",  # 对信贷预测贡献低，但类别多
+    #     "HOUR_APPR_PROCESS_START",
+    #     "OWN_CAR_AGE"  # 缺失值极多
+    # ]
 
     # 采样大小 (防止内存溢出) / Sample size (to prevent OOM)
     # None = 使用全部数据 / None = use full data
@@ -170,11 +182,11 @@ MODELS_CONFIG = {
     },
     "CTGAN": {
         "class": CTGANSynthesizer,
-        "params": {"epochs": 5} # 测试用 / For testing
+        "params": {"epochs": 5,"verbose": True}
     },
     "TVAE": {
         "class": TVAESynthesizer,
-        "params": {"epochs": 5} # 测试用 / For testing
+        "params": {"epochs": 5,"verbose": True}
     }
 }
 
