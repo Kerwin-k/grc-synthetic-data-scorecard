@@ -19,22 +19,31 @@ from sdv.single_table import (
 
 
 def _create_emissions_tracker_for_model(model_name: str):
-    tracker_kwargs = {
+    # 1. 定义所有追踪器通用的参数
+    common_kwargs = {
         "project_name": f"thesis-sdg-{model_name}",
         "output_dir": PathConfig.EMISSIONS_DIR,
         "output_file": f"{model_name}_emissions.csv",
         "save_to_file": True,
+        "log_level": "error"  # 减少日志噪音
     }
 
     try:
-        # 修改逻辑：根据是否有国家代码选择不同的类
+        # 2. 根据是否有 ISO 代码决定模式
         if SustainabilityConfig.FIXED_COUNTRY_ISO:
-            tracker_kwargs["country_iso_code"] = SustainabilityConfig.FIXED_COUNTRY_ISO
-            # 必须用 Offline 类来接收 country_iso_code
-            tracker = OfflineEmissionsTracker(**tracker_kwargs)
+            # --- 离线模式 (Offline) ---
+            # 关键修复：country_iso_code 必须作为显式参数传递，不要混在 common_kwargs 里
+            logging.info(
+                f"[Sustainability] Init Offline Tracker for {model_name} (ISO: {SustainabilityConfig.FIXED_COUNTRY_ISO})")
+
+            tracker = OfflineEmissionsTracker(
+                country_iso_code=SustainabilityConfig.FIXED_COUNTRY_ISO,
+                **common_kwargs
+            )
         else:
-            # 在线检测模式，不要传 country_iso_code
-            tracker = EmissionsTracker(**tracker_kwargs)
+            # --- 在线模式 (Online) ---
+            logging.info(f"[Sustainability] Init Online Tracker for {model_name}")
+            tracker = EmissionsTracker(**common_kwargs)
 
         return tracker
 
