@@ -21,7 +21,7 @@ from sdv.single_table import (
 def _create_emissions_tracker_for_model(model_name: str):
     # 1. 定义所有追踪器通用的参数
     common_kwargs = {
-        "project_name": f"thesis-sdg-{model_name}",
+        "project_name": f"thesis-green-ai-{model_name}",
         "output_dir": PathConfig.EMISSIONS_DIR,
         "output_file": f"{model_name}_emissions.csv",
         "save_to_file": True,

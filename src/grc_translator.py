@@ -38,7 +38,7 @@ METRIC_MAP = {
     },
     "privacy_mia_auc": {
         "category": "Risk",
-        "display_name": "Privacy (MIA AUC)",
+        "display_name": "Privacy Risk (MIA AUC)",
         "thresholds": RAGThresholdConfig.PRIVACY_MIA,
     },
     "avg_fairness": {

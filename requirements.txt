@@ -1,20 +1,18 @@
 # --- 锁定旧版 Numpy 以防冲突 ---
+numpy>=1.23.0,<1.27.0
 pandas>=1.5.0,<2.2.0
-numpy>=1.23.0,<2.0.0
 
 # --- 手动锁定 PyTorch 为 2024 年的稳定版 (兼容 T4/P100) ---
 # 注意：不要让 sdv 自动拉取最新的 torch 2.9.x
 torch==2.4.0
 torchvision==0.19.0
 torchaudio==2.4.0
-
 # --- 业务库 ---
-sdv>=1.10.0
-sdmetrics>=0.10.0
-
+sdv==1.14.0
+sdmetrics==0.14.0
 # Machine learning & fairness
 scikit-learn>=1.2.0,<1.6.0
-fairlearn>=0.9.0
+fairlearn==0.10.0
 
 # Sustainability tracking
 codecarbon>=2.3.0
