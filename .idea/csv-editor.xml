@@ -3,13 +3,6 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
-        <entry key="\data\processed\adult_clean.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
         <entry key="\data\raw\adult.csv">
           <value>
             <Attribute>
@@ -17,28 +10,7 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\results\emissions\CTGAN_emissions.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="\results\emissions\GaussianCopula_emissions.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
         <entry key="\results\grc_scorecard.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="\results\synthetic_data\synth_gaussiancopula.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

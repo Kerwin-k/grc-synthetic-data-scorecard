@@ -60,17 +60,21 @@ METRIC_MAP = {
 
 # 颜色方案 / Color Scheme
 RAG_COLORS = {
-    "Green": "#B7E1CD",
-    "Amber": "#FFE9A3",
-    "Red": "#F4B4AE",
-    "N/A": "#E6E6E6",
+    "Green": "#B7E1CD",  # 良好 / Good
+    "Amber": "#FFE9A3",  # 警告 / Warning
+    "Red": "#F4B4AE",  # 风险 / Critical
+    "N/A": "#E6E6E6",  # 无数据 / No Data
 }
 
 
 def _get_rag_status(metric_key: str, value: float, thresholds: dict) -> str:
     """
-    根据阈值确定 RAG 状态（支持“越高越好”和“越低越好”）。
-    Determine RAG status based on thresholds (supports high-is-better and low-is-better).
+    根据阈值确定 RAG 状态。
+    Determine RAG status based on thresholds.
+
+    处理两种逻辑 / Handles two logics:
+    1. 越高越好 (High-is-better): 例如准确率 (Utility)。
+    2. 越低越好 (Low-is-better): 例如碳排放 (Sustainability)、隐私风险 (Risk)。
     """
     if pd.isna(value):
         return "N/A"
@@ -120,12 +124,15 @@ def create_grc_scorecard(all_metrics, models_config):
         if cov == "full" and v is not None and not pd.isna(v):
             co2_vals.append(float(v))
     co2_max = float(np.nanmax(co2_vals)) if co2_vals else None
+
+    # 如果最大排放量都非常小，标记为 Near Zero
+    # Mark as Near Zero if max emissions are negligible
     co2_near_zero = (
             co2_max is not None and co2_max < RAGThresholdConfig.SUSTAIN_CO2_NEAR_ZERO
     )
 
     for model_name, metrics in all_metrics.items():
-        # 聚合公平性指标 / Aggregate fairness
+        # 聚合公平性指标 (取平均) / Aggregate fairness (Take average)
         fair_vals = [
             v for k, v in metrics.items() if k.startswith("fairness_") and pd.notna(v)
         ]
@@ -149,6 +156,8 @@ def create_grc_scorecard(all_metrics, models_config):
                 rag = "N/A"
             else:
                 thresholds = cfg["thresholds"]
+                # 特殊逻辑：如果碳排放极低，直接给绿牌
+                # Special logic: Instant Green if emissions are near zero
                 if metric_key == "co2_eq_kg" and co2_near_zero and pd.notna(value):
                     rag = "Green"
                 elif pd.notna(value):
@@ -176,7 +185,7 @@ def create_grc_scorecard(all_metrics, models_config):
 
     df = pd.DataFrame(rows)
 
-    # 透视表转换 / Pivot
+    # 透视表转换 / Pivot table to Matrix format
     pivot = df.pivot_table(
         index=["Category", "Metric"],
         columns="Model",
@@ -198,8 +207,8 @@ def create_grc_scorecard(all_metrics, models_config):
 
 def _infer_sample_and_coverage_text():
     """
-    推断样本信息文本。
-    Infer sample info text.
+    推断样本信息文本，用于图表注脚。
+    Infer sample info text for figure footnotes.
     """
     effective_rows = getattr(DatasetConfig, "SAMPLE_SIZE", None)
     if effective_rows is None:
@@ -207,7 +216,7 @@ def _infer_sample_and_coverage_text():
 
     stratified = getattr(DatasetConfig, "STRATIFY_BY_TARGET", False)
 
-    # 尝试推断原始行数 / Try to infer original rows
+    # 尝试推断原始行数 / Try to infer original rows from raw file
     original_rows = None
     try:
         raw_path = getattr(DatasetConfig, "RAW_PATH", None)
@@ -262,19 +271,19 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         _infer_sample_and_coverage_text()
     )
 
-    # 检查是否需要显示注脚 / Check for footnotes
+    # 检查是否需要显示注脚 / Check for footnotes based on markers
     metric_names = [
         idx[1] if isinstance(idx, tuple) else str(idx) for idx in scorecard_df.index
     ]
     has_partial = any("[*]" in m for m in metric_names)
     has_na = any("[N/A]" in m for m in metric_names)
 
-    # 图表尺寸 / Figure size
+    # 图表尺寸设置 / Figure size configuration
     fig_width = max(10.0, 2.6 * n_cols)
     fig_height = max(9.0, 0.55 * n_rows + 7.2)
     fig = plt.figure(figsize=(fig_width, fig_height))
 
-    # 布局设置 / Layout setup
+    # 布局网格设置 / Grid Layout
     outer_gs = fig.add_gridspec(
         4, 1, height_ratios=[1.3, 1.4, 3.5, 1.4]
     )
@@ -306,9 +315,9 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     subtitle_line_h = 0.08
     sep_y = 0.35
 
-    # [OPTIMIZATION] Bringing sample info closer together
+    # 优化样本信息位置 / Optimize sample info position
     sample_y1 = 0.18  # was 0.22
-    sample_y2 = 0.11  # was 0.08 (gap reduced from 0.14 to 0.07)
+    sample_y2 = 0.11  # was 0.08
 
     ax_title.text(
         0.5,
@@ -342,7 +351,6 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     )
     ax_title.add_line(line)
 
-    # [OPTIMIZATION] Smaller font (8.8) and closer positioning
     ax_title.text(
         0.5,
         sample_y1,
@@ -370,12 +378,12 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     ax_text.set_xlim(0, 1)
     ax_text.set_ylim(0, 1)
 
-    # [OPTIMIZATION] Extended box height to accommodate larger line spacing
-    left_box_y0 = 0.12  # lowered from 0.20
-    left_box_h = 0.86  # increased from 0.78
+    left_box_y0 = 0.12
+    left_box_h = 0.86
     right_box_y0 = 0.12
     right_box_h = 0.86
 
+    # 绘制灰色背景框 / Draw background boxes
     left_box = FancyBboxPatch(
         (0.02, left_box_y0),
         0.45,
@@ -404,7 +412,6 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     box_top_y = left_box_y0 + left_box_h
 
     # Headers
-    # Moved slightly higher to give body text more room
     title_y_in_box = box_top_y - 0.03
     ax_text.text(
         0.045,
@@ -427,7 +434,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         transform=ax_text.transAxes,
     )
 
-    # Content
+    # Content Bullets
     left_bullets = [
         "• Quality – how closely synthetic data matches the patterns and relationships in the real data.",
         "• Risk – privacy and fairness risk, including potential bias between groups and risk of re-identification.",
@@ -444,9 +451,8 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     def _draw_paragraph_fixed(ax, bullets, x_start, start_y, wrap_width, transform):
         import textwrap as _tw
 
-        # [OPTIMIZATION] Significantly increased spacing
-        line_height = 0.065  # Increased from 0.052
-        para_gap = 0.042  # Increased from 0.035
+        line_height = 0.065
+        para_gap = 0.042
 
         current_y = start_y
         for idx, bullet in enumerate(bullets):
@@ -466,7 +472,6 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
                 current_y -= line_height
             current_y -= para_gap
 
-    # Starting text position
     text_start_y = box_top_y - 0.15
 
     _draw_paragraph_fixed(
@@ -486,7 +491,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         transform=ax_text.transAxes,
     )
 
-    # ========= 3. Score Matrix =========
+    # ========= 3. Score Matrix (热力图) =========
     ax_heat.set_xlim(-0.15, n_cols)
     ax_heat.set_ylim(0, n_rows)
     ax_heat.invert_yaxis()
@@ -497,6 +502,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
             rag = rag_data.iat[i, j]
             color = RAG_COLORS.get(rag, "#FFFFFF")
 
+            # 绘制方块 / Draw rectangle
             ax_heat.add_patch(
                 plt.Rectangle(
                     (j, i),
@@ -507,6 +513,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
                     linewidth=0.8,
                 )
             )
+            # 填充数值 / Fill text value
             if pd.notna(val):
                 if isinstance(val, (int, float, np.floating)):
                     text_val = f"{val:.3f}"
@@ -531,6 +538,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
     ax_heat.set_yticks(y_centers)
     ax_heat.set_yticklabels([])
 
+    # 绘制行标签 / Draw row labels
     prev_cat = None
     for row_i, idx in enumerate(score_data.index):
         if isinstance(idx, tuple):
@@ -538,6 +546,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         else:
             category, metric = "", str(idx)
 
+        # 类别分割线 / Category separator
         if prev_cat is not None and category != prev_cat:
             ax_heat.axhline(row_i, color="#DDDDDD", linewidth=0.8)
         prev_cat = category
@@ -577,7 +586,6 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         mpatches.Patch(color=RAG_COLORS["N/A"], label="Grey – N/A"),
     ]
 
-    # [OPTIMIZATION] Pushed Legend DOWN to 0.60 to clear the "Model" label
     ax_leg.legend(
         handles=patches,
         loc="upper center",
@@ -587,8 +595,7 @@ def save_scorecard_as_image(scorecard_df, output_path: str | None = None):
         fontsize=9.5,
     )
 
-    # --- [FIX] 修复：重新添加注脚文本的生成逻辑 ---
-    # --- [FIX] Restore footnote text generation logic ---
+    # 生成注脚 / Generate footnotes
     footnote_texts = []
 
     if effective_rows is not None:

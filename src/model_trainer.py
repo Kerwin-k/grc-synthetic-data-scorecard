@@ -19,20 +19,25 @@ from sdv.single_table import (
 
 
 def _create_emissions_tracker_for_model(model_name: str):
-    # 1. 定义所有追踪器通用的参数
+    """
+    初始化 CodeCarbon 排放追踪器。
+    Initialize CodeCarbon Emissions Tracker.
+    """
+    # 1. 定义所有追踪器通用的参数 / Define common parameters
     common_kwargs = {
         "project_name": f"thesis-green-ai-{model_name}",
         "output_dir": PathConfig.EMISSIONS_DIR,
         "output_file": f"{model_name}_emissions.csv",
         "save_to_file": True,
-        "log_level": "error"  # 减少日志噪音
+        "log_level": "error"  # 减少日志噪音 / Reduce log noise
     }
 
     try:
-        # 2. 根据是否有 ISO 代码决定模式
+        # 2. 根据是否有 ISO 代码决定模式 / Decide mode based on ISO code availability
         if SustainabilityConfig.FIXED_COUNTRY_ISO:
             # --- 离线模式 (Offline) ---
             # 关键修复：country_iso_code 必须作为显式参数传递，不要混在 common_kwargs 里
+            # Critical Fix: country_iso_code must be passed explicitly
             logging.info(
                 f"[Sustainability] Init Offline Tracker for {model_name} (ISO: {SustainabilityConfig.FIXED_COUNTRY_ISO})")
 
@@ -54,9 +59,13 @@ def _create_emissions_tracker_for_model(model_name: str):
 
 def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFrame:
     """
-    安全地准备训练数据：
-    1. 先降采样到 MAX_TRAIN_ROWS (防止 OOM)
-    2. 再进行类平衡 (防止 Mode Collapse)
+    安全地准备训练数据。
+    Safely prepare training data.
+
+    逻辑步骤 / Logic Steps:
+    1. 预先降采样 (Pre-emptive Downsampling): 限制总行数以防止 OOM。
+    2. 类平衡 (Class Balancing): 使用混合策略处理严重不平衡数据，防止 Mode Collapse。
+    3. 精度压缩 (Downcasting): 转换 float64 -> float32。
     """
     df = full_df.copy()
     target_col = getattr(DatasetConfig, "TARGET_COLUMN", "TARGET")
@@ -64,10 +73,11 @@ def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFr
 
     # --- 步骤 1: 预先降采样 (Pre-emptive Downsampling) ---
     # 在做任何处理前，先限制总行数，防止后续处理撑爆内存
+    # Limit total rows before any processing to prevent memory explosion
     if max_rows is not None and len(df) > max_rows:
         logging.info(f"[{model_name}] Downsampling from {len(df)} to {max_rows} before balancing.")
         if target_col in df.columns:
-            # 分层抽样以保持原始比例
+            # 分层抽样以保持原始比例 / Stratified sampling to preserve original ratios
             df = df.groupby(target_col, group_keys=False).apply(
                 lambda x: x.sample(frac=max_rows / len(full_df), random_state=42)
             )
@@ -76,9 +86,10 @@ def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFr
 
     # --- 步骤 2: 处理类别不平衡 (Class Balancing) ---
     # 只有当目标列存在且确实不平衡时才执行
+    # Only execute if target column exists and data is imbalanced
     if target_col in df.columns:
         counts = df[target_col].value_counts()
-        if len(counts) == 2:  # 仅处理二分类
+        if len(counts) == 2:  # 仅处理二分类 / Only handle binary classification
             minority_class = counts.idxmin()
             majority_class = counts.idxmax()
 
@@ -87,18 +98,20 @@ def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFr
 
             ratio = min_count / maj_count
 
-            # 阈值设为 0.3
+            # 如果少数类比例低于 0.3，触发平衡机制
+            # Trigger balancing if minority class ratio is below 0.3
             if ratio < 0.3:
                 logging.info(f"[{model_name}] Triggering Hybrid Resampling (Ratio: {ratio:.2%})...")
 
                 df_minority = df[df[target_col] == minority_class]
                 df_majority = df[df[target_col] == majority_class]
 
-                # 混合策略 (Hybrid Strategy)
-                # 1. 保持多数类数据尽可能多 (Minimal Invasive)，只在超过 MAX_TRAIN_ROWS 时才会被 Step 1 截断
-                # 2. 上采样少数类，使其达到多数类的一定比例 (例如 50%)，以恢复信号
+                # 混合策略 (Hybrid Strategy):
+                # 1. 最小化入侵 (Minimal Invasive): 保持多数类数据原样。
+                # 2. 信号增强 (Signal Boosting): 上采样少数类使其达到多数类的 50%，确保模型能学到少数类特征。
 
-                # 目标: 让少数类达到多数类的 50% (或者你认为合适的平衡点，0.5 是比较稳健的)
+                # 目标: 让少数类达到多数类的 50%
+                # Target: Upsample minority to 50% of majority count
                 target_min_count = int(len(df_majority) * 0.5)
 
                 # 如果原始少数类太少，就过采样；如果已经够多(只是比例低)，保持原样
@@ -110,7 +123,7 @@ def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFr
                 else:
                     df_min_up = df_minority
 
-                # 合并
+                # 合并数据 / Concatenate
                 df = pd.concat([df_majority, df_min_up])
                 logging.info(f"[{model_name}] Hybrid Resampling Complete. New shape: {df.shape}")
 
@@ -120,12 +133,16 @@ def _prepare_data_for_model(full_df: pd.DataFrame, model_name: str) -> pd.DataFr
         if len(float_cols) > 0:
             df[float_cols] = df[float_cols].astype("float32")
 
-    # 最后打乱顺序
+    # 最后打乱顺序 / Final shuffle
     df = df.sample(frac=1, random_state=42).reset_index(drop=True)
     return df
 
 
 def train_and_generate(real_data, metadata, num_rows_to_generate, models_config):
+    """
+    训练模型并生成合成数据，同时追踪碳排放。
+    Train models, generate synthetic data, and track carbon emissions.
+    """
     os.makedirs(PathConfig.SYNTH_DIR, exist_ok=True)
     os.makedirs(PathConfig.EMISSIONS_DIR, exist_ok=True)
     os.makedirs(PathConfig.MODELS_DIR, exist_ok=True)
@@ -139,9 +156,10 @@ def train_and_generate(real_data, metadata, num_rows_to_generate, models_config)
         model_class = cfg["class"]
         model_params = cfg.get("params", {})
 
-        # 准备数据
+        # 准备数据 / Prepare Data
         data_for_model = _prepare_data_for_model(real_data, name)
 
+        # 初始化排放追踪器 / Init Emissions Tracker
         tracker = _create_emissions_tracker_for_model(name)
 
         start_time = time.time()
@@ -149,25 +167,26 @@ def train_and_generate(real_data, metadata, num_rows_to_generate, models_config)
             tracker.start()
 
         try:
-            # 训练
+            # 训练 / Train
             model = model_class(metadata, **model_params)
             model.fit(data_for_model)
 
-            # 生成
+            # 生成 / Generate
             synth = model.sample(num_rows_to_generate)
 
             # 停止追踪 (关键修复：只调用一次 stop)
+            # Stop tracking (Critical fix: call stop only once)
             emissions_kg = None
             energy_kwh = None
 
             if tracker:
-                emissions_kg = tracker.stop()  # stop() 返回的是 emissions
-                # 尝试获取更详细的数据
+                emissions_kg = tracker.stop()  # stop() returns emissions
+                # 尝试获取更详细的数据 (如 KWh) / Try to get detailed energy data
                 energy_kwh = getattr(tracker, 'final_energy', None)
 
             elapsed = time.time() - start_time
 
-            # 记录结果
+            # 记录结果 / Log results
             sustainability_report[name] = {
                 "training_time_sec": elapsed,
                 "co2_eq_kg": emissions_kg,
@@ -175,7 +194,7 @@ def train_and_generate(real_data, metadata, num_rows_to_generate, models_config)
                 "sustainability_coverage": "full" if emissions_kg is not None else "unknown"
             }
 
-            # 保存
+            # 保存模型和数据 / Save model and data
             model.save(os.path.join(PathConfig.MODELS_DIR, f"{name.lower()}.pkl"))
             synth.to_csv(os.path.join(PathConfig.SYNTH_DIR, f"synth_{name.lower()}.csv"), index=False)
 

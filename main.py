@@ -26,12 +26,15 @@ class NpEncoder(json.JSONEncoder):
 
 def main():
     """
-    编排完整的 5 步流程 / Orchestrate the complete 5-step process:
-    1. 数据摄入与清洗 / Data Ingestion & Cleaning
-    2. 模型训练与数据生成 (维度 5) / Model Training & Generation (Dimension 5)
-    3. 评估 (维度 1-4) / Evaluation (Dimensions 1-4)
-    4. 转化 (GRC 记分卡) / Transformation (GRC Scorecard)
-    5. 报告生成 / Reporting
+    编排完整的 5 步评估流程。
+    Orchestrate the complete 5-step evaluation process.
+
+    步骤 / Steps:
+    1. 数据摄入与清洗 (Ingestion & Cleaning): 加载数据，预处理，生成元数据。
+    2. 模型训练与生成 (Training & Generation): 训练生成模型并追踪碳排放 (Dimension 5)。
+    3. 定量评估 (Quantitative Eval): 计算质量、效用、隐私和公平性指标 (Dimensions 1-4)。
+    4. 定性转化 (Qualitative Transformation): 将原始指标转换为 GRC RAG 记分卡。
+    5. 报告可视化 (Visualization): 生成最终的记分卡图像报告。
     """
 
     logging.info("==============================================")

@@ -28,18 +28,20 @@ def _ensure_parent_dir(path: str) -> None:
 
 def load_and_clean_data() -> pd.DataFrame:
     """
-    统一的数据加载入口 / Unified Data Loading Entry Point:
+    统一的数据加载入口。
+    Unified Data Loading Entry Point.
 
-    1. 从 RAW_DIR 读取原始 CSV / Read raw CSV from RAW_DIR
+    流程 / Pipeline:
+    1. 从 RAW_DIR 读取原始 CSV / Read raw CSV from RAW_DIR.
     2. 中心化采样 / Centralized Sampling:
-       - 根据 DatasetConfig.SAMPLING_MODE 处理（full 或 fixed）
-       - 如果行数超过 SAMPLE_SIZE，执行分层或随机采样
-    3. 删除指定列 / Drop specified columns (COLS_TO_DROP)
+       - 根据 DatasetConfig.SAMPLING_MODE 处理（full 或 fixed）。
+       - 如果行数超过 SAMPLE_SIZE，执行分层或随机采样。
+    3. 删除指定列 / Drop specified columns (COLS_TO_DROP).
     4. 基础清洗 / Basic Cleaning:
-       - 去除空白字符 / Strip whitespace
-       - 统一缺失值标记 / Unify missing value markers
-    5. 降精度 / Downcasting (float64 -> float32)
-    6. 保存到 PROCESSED_DIR / Save to PROCESSED_DIR
+       - 去除空白字符 / Strip whitespace.
+       - 统一缺失值标记 / Unify missing value markers.
+    5. 降精度 (float64 -> float32) / Downcasting.
+    6. 保存到 PROCESSED_DIR / Save to PROCESSED_DIR.
     """
     raw_path = DatasetConfig.RAW_PATH
     if not os.path.exists(raw_path):
@@ -47,24 +49,25 @@ def load_and_clean_data() -> pd.DataFrame:
 
     logger.info(f"[DataLoader] Loading raw data from {raw_path}...")
 
-    # 读取原始数据
+    # 读取原始数据 / Read raw data
     df = pd.read_csv(raw_path)
 
     # ----------------------------
     # 2) 中心化采样 / Centralized Sampling
     # ----------------------------
     # 如果配置为固定大小采样，且数据量超过阈值
+    # If configured for fixed-size sampling and data exceeds threshold
     if DatasetConfig.SAMPLING_MODE == "fixed" and len(df) > DatasetConfig.SAMPLE_SIZE:
         target_col = getattr(DatasetConfig, "TARGET_COLUMN", None)
 
         if target_col and target_col in df.columns:
-            # 分层采样
+            # 分层采样 (Stratified Sampling)
             logger.info(f"[DataLoader] Stratified sampling to {DatasetConfig.SAMPLE_SIZE} rows...")
             split = StratifiedShuffleSplit(n_splits=1, train_size=DatasetConfig.SAMPLE_SIZE, random_state=42)
             for train_index, _ in split.split(df, df[target_col]):
                 df = df.iloc[train_index]
         else:
-            # 随机采样
+            # 随机采样 (Random Sampling)
             logger.info(f"[DataLoader] Random sampling to {DatasetConfig.SAMPLE_SIZE} rows...")
             df = df.sample(n=DatasetConfig.SAMPLE_SIZE, random_state=42)
 
@@ -79,14 +82,13 @@ def load_and_clean_data() -> pd.DataFrame:
             logger.info(f"[DataLoader] Dropping ignored columns: {cols_to_drop}")
             df = df.drop(columns=cols_to_drop)
 
-    # 1. Basic Cleaning
-    # Remove identifiers if configured
+    # 删除标识符列 (如果已配置) / Remove identifiers if configured
     if hasattr(DatasetConfig, 'ID_COLUMN') and DatasetConfig.ID_COLUMN in df.columns:
         logger.info(f"[DataLoader] Removing ID column: {DatasetConfig.ID_COLUMN}")
         df = df.drop(columns=[DatasetConfig.ID_COLUMN])
 
-    # 统一缺失值
-    # 将常见的缺失值标记替换为 np.nan
+    # 统一缺失值 / Unify missing values
+    # 将空白字符、NA、? 等替换为 np.nan / Replace regex whitespace, NA, ?, null with np.nan
     df = (
         df.replace(r"^\s*$", np.nan, regex=True)
         .replace(["", "NA", "NaN", "?", "null"], np.nan)
@@ -97,6 +99,7 @@ def load_and_clean_data() -> pd.DataFrame:
         if df[col].dtype == "object":
             try_num = pd.to_numeric(df[col], errors="ignore")
             # 只有当转换后确实变成了数值类型才覆盖
+            # Only overwrite if conversion effectively results in a numeric type
             if pd.api.types.is_numeric_dtype(try_num):
                 df[col] = try_num
 
@@ -121,8 +124,8 @@ def load_and_clean_data() -> pd.DataFrame:
 
 def generate_and_save_metadata(data: pd.DataFrame, metadata_path: str) -> SingleTableMetadata:
     """
-    为数据生成 SDV 元数据并保存。
-    Create SDV metadata for data and persist it.
+    为数据生成 SDV 元数据并保存为 JSON。
+    Create SDV metadata for data and persist it as JSON.
     """
     metadata = SingleTableMetadata()
     metadata.detect_from_dataframe(data)

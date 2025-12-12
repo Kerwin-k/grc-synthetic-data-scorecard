@@ -28,7 +28,10 @@ def enforce_schema(real_df: pd.DataFrame, synth_df: pd.DataFrame) -> pd.DataFram
     全局类型强制与模式对齐。
     Global Type Enforcement + Schema Alignment.
 
-    确保 synth_df 与 real_df 在列名、顺序和数据类型上一致：
+    确保 synth_df 与 real_df 在列名、顺序和数据类型上完全一致，防止评估报错。
+    Ensure synth_df matches real_df in column names, order, and data types to prevent eval errors.
+
+    步骤 / Steps:
     1. 重新索引以对齐列顺序 / Reindex to align columns
     2. 强制数值列转换 / Coerce numeric conversion
     3. 强制分类列为字符串 / Force categorical columns to string
@@ -48,14 +51,14 @@ def enforce_schema(real_df: pd.DataFrame, synth_df: pd.DataFrame) -> pd.DataFram
 
 
 def _aligned_sample(
-    X: pd.DataFrame,
-    y: pd.Series,
-    max_rows: int | None,
-    *,
-    random_state: int = 42,
+        X: pd.DataFrame,
+        y: pd.Series,
+        max_rows: int | None,
+        *,
+        random_state: int = 42,
 ):
     """
-    监督学习对齐采样：X 和 y 使用相同的索引进行采样。
+    监督学习对齐采样：确保 X 和 y 使用相同的索引进行采样。
     Aligned sampling for supervised learning: X and y sampled with same indices.
     """
     if max_rows is None or len(X) <= max_rows:
@@ -70,8 +73,9 @@ def _create_ml_preprocessor(data: pd.DataFrame) -> ColumnTransformer:
     创建 sklearn 预处理管道。
     Create sklearn preprocessing pipeline.
 
-    - 数值: 中位数填充 + 标准化 / Numeric: Median Imputation + Scaling
-    - 分类: 众数填充 + OneHot 编码 / Categorical: Mode Imputation + OneHot
+    策略 / Strategy:
+    - 数值 (Numeric): 中位数填充 + 标准化 / Median Imputation + Scaling
+    - 分类 (Categorical): 众数填充 + OneHot 编码 / Mode Imputation + OneHot
     """
     categorical_cols = data.select_dtypes(include=["object", "category"]).columns
     categorical_cols = categorical_cols.drop(DatasetConfig.TARGET_COLUMN, errors="ignore")
@@ -105,7 +109,7 @@ def _create_ml_preprocessor(data: pd.DataFrame) -> ColumnTransformer:
 
 def evaluate_quality_fup(real_data, synth_data, metadata_dict):
     """
-    评估维度 1: 保真度、效用与隐私。
+    评估维度 1: 保真度、效用与隐私 (FUP)。
     Evaluates Dimension 1: Fidelity, Utility, and Privacy (FUP).
     """
     logging.info("... Evaluating Dimension 1: FUP...")
@@ -130,6 +134,7 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         metrics["fidelity_nmi_avg"] = np.nan
 
     # --- 1.2 效用 (TSTR) / Utility ---
+    # TSTR: Train on Synthetic, Test on Real (在合成数据上训练，在真实数据上测试)
     logging.info("... Calculating Utility (TSTR)...")
     real_train = None
 
@@ -181,6 +186,7 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         tstr_results = {}
 
     # --- 1.3 隐私 (MIA) / Privacy ---
+    # MIA: Membership Inference Attack (成员推理攻击)
     logging.info("... Calculating Privacy (MIA)...")
     try:
         reference_real = real_train if real_train is not None else real_data
@@ -189,7 +195,8 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         if max_rows_mia is not None and n_synth > max_rows_mia:
             n_synth = max_rows_mia
 
-        # 创建 MIA 数据集 / Create MIA dataset
+        # 创建 MIA 数据集 (二分类：判断记录是真实的还是合成的)
+        # Create MIA dataset (Binary: predict if record is real or synthetic)
         real_subset = reference_real.sample(n=n_synth, replace=True, random_state=rs)
         real_subset = real_subset.copy()
         real_subset["is_real"] = 1
@@ -211,6 +218,8 @@ def evaluate_quality_fup(real_data, synth_data, metadata_dict):
         mia_model = LogisticRegression(max_iter=1000, random_state=rs)
         mia_model.fit(X_mia_train_processed, y_mia_train)
 
+        # 如果 AUC 接近 0.5，说明攻击者无法区分，隐私保护好
+        # If AUC is near 0.5, attacker cannot distinguish -> Good Privacy
         y_mia_pred_proba = mia_model.predict_proba(X_mia_test_processed)[:, 1]
         metrics["privacy_mia_auc"] = roc_auc_score(y_mia_test, y_mia_pred_proba)
 
@@ -225,6 +234,10 @@ def evaluate_fairness(tstr_results):
     """
     评估维度 4: 算法公平性。
     Evaluates Dimension 4: Algorithmic Fairness.
+
+    指标 / Metrics:
+    - Demographic Parity Difference (DP Diff): 不同群体的预测正例率之差。
+    - Equalized Odds Difference (EO Diff): 不同群体的 TPR/FPR 之差。
     """
     logging.info("... Evaluating Dimension 4: Fairness...")
     metrics = {}
